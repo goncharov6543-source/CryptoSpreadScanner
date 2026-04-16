@@ -659,13 +659,13 @@ async function renderPositionsTab() {
 
 // ДОДАНО: Функція для розгортання історії
 window.toggleHistoryDetails = function(id) {
-    const el = document.getElementById('details-' + id);
+    const el = document.getElementById(id);
     if(el) {
         el.style.display = (el.style.display === 'block') ? 'none' : 'block';
     }
 };
 
-// --- ВКЛАДКА ІСТОРІЇ ---
+// --- ВКЛАДКА ІСТОРІЇ (ОНОВЛЕНО ГРУПУВАННЯ) ---
 function renderHistoryTab() {
     const container = document.getElementById('history-content');
     
@@ -674,59 +674,96 @@ function renderHistoryTab() {
         return;
     }
 
-    let html = '';
-    settings.positionHistory.forEach((p, idx) => {
-        const pnlClass = p.finalPnl >= 0 ? 'pnl-green' : 'pnl-red';
-        const sign = p.finalPnl > 0 ? '+' : '';
+    // Логіка групування: об'єднуємо угоди по одній монеті, які були закриті протягом 2 хвилин
+    let groupedHistory = [];
+    let skipIndices = new Set();
 
-        // Оновлено HTML історії з клікабельним рядком і випадаючим меню
+    for (let i = 0; i < settings.positionHistory.length; i++) {
+        if (skipIndices.has(i)) continue;
+        let p1 = settings.positionHistory[i];
+        let group = {
+            cleanSymbol: p1.cleanSymbol,
+            closeDate: p1.closeDate,
+            sizeUSDT: p1.sizeUSDT || 0,
+            finalPnl: p1.finalPnl,
+            legs: [p1]
+        };
+
+        for (let j = i + 1; j < settings.positionHistory.length; j++) {
+            if (skipIndices.has(j)) continue;
+            let p2 = settings.positionHistory[j];
+            // Якщо та сама монета і різниця у часі закриття менше 2 хвилин (120000 мс)
+            if (p2.cleanSymbol === p1.cleanSymbol && Math.abs(p2.closeDate - p1.closeDate) < 120000) {
+                group.legs.push(p2);
+                group.finalPnl += p2.finalPnl;
+                group.sizeUSDT = Math.max(group.sizeUSDT, p2.sizeUSDT || 0); // Беремо максимальний розмір з двох ніг
+                skipIndices.add(j);
+            }
+        }
+        groupedHistory.push(group);
+    }
+
+    let html = '';
+    groupedHistory.forEach((group, idx) => {
+        const pnlClass = group.finalPnl >= 0 ? 'pnl-green' : 'pnl-red';
+        const sign = group.finalPnl > 0 ? '+' : '';
+        
+        // Збираємо назви бірж для головного рядка
+        const exchanges = group.legs.map(leg => leg.exchange).join(' / ');
+
+        // Генеруємо HTML для деталей (кожної ноги окремо)
+        let legsHtml = '';
+        group.legs.forEach(leg => {
+            const legPnlClass = leg.finalPnl >= 0 ? 'pnl-green' : 'pnl-red';
+            const legSign = leg.finalPnl > 0 ? '+' : '';
+            legsHtml += `
+                <div class="history-detail-item">
+                    <div style="flex: 1;"><span>Біржа:</span> <b>${leg.exchange}</b></div>
+                    <div style="flex: 1; text-align: center;"><span>Сторона:</span> <b style="${leg.side==='Long'?'color:#00d67c':'color:#e74c3c'}">${leg.side} ${leg.leverage}x</b></div>
+                    <div style="flex: 1; text-align: center;"><span>Ціна входу:</span> <b>$${leg.entryPrice.toFixed(4)}</b></div>
+                    <div style="flex: 1; text-align: right;"><span>PNL:</span> <b class="${legPnlClass}">${legSign}$${leg.finalPnl.toFixed(4)}</b></div>
+                </div>
+            `;
+        });
+
         html += `
-        <div class="history-group">
-            <div class="pos-card history-row" onclick="toggleHistoryDetails(${idx})">
+        <div class="pos-card history-card" onclick="toggleHistoryDetails('details-hist-${idx}')">
+            <div class="history-summary">
                 <div class="pos-col">
                     <div class="pos-label">Монета (Закрита)</div>
-                    <div class="pos-value" style="font-size: 1.2em;">${p.cleanSymbol}</div>
+                    <div class="pos-value" style="font-size: 1.2em;">${group.cleanSymbol}</div>
                 </div>
                 
                 <div class="pos-col center">
                     <div class="pos-label">Розмір</div>
-                    <div class="pos-value">${formatCurrency(p.sizeUSDT || 0)}</div>
+                    <div class="pos-value">${formatCurrency(group.sizeUSDT)}</div>
                 </div>
 
                 <div class="pos-col center">
                     <div class="pos-label">Час закриття</div>
-                    <div class="pos-value">${new Date(p.closeDate).toLocaleString('uk-UA')}</div>
+                    <div class="pos-value">${new Date(group.closeDate).toLocaleString('uk-UA')}</div>
                 </div>
                 
                 <div class="pos-col center">
-                    <div class="pos-label">Біржа</div>
-                    <div class="pos-value">${p.exchange}</div>
+                    <div class="pos-label">Біржі</div>
+                    <div class="pos-value" style="font-size: 0.9em;">${exchanges}</div>
                 </div>
 
                 <div class="pos-col right">
-                    <div class="pos-label">Фінальний PNL</div>
+                    <div class="pos-label">Загальний PNL</div>
                     <div class="pos-total-pnl ${pnlClass}" style="display:inline-block; margin-top:5px;">
-                        ${sign}$${p.finalPnl.toFixed(2)}
+                        ${sign}$${group.finalPnl.toFixed(2)}
                     </div>
                 </div>
             </div>
             
-            <div id="details-${idx}" class="history-details">
-                <div class="history-detail-item">
-                    <span>Біржа:</span> <b>${p.exchange}</b>
-                </div>
-                <div class="history-detail-item">
-                    <span>Сторона:</span> <b style="${p.side==='Long'?'color:#00d67c':'color:#e74c3c'}">${p.side} ${p.leverage}x</b>
-                </div>
-                <div class="history-detail-item">
-                    <span>Ціна входу:</span> <b>$${p.entryPrice.toFixed(4)}</b>
-                </div>
-                <div class="history-detail-item">
-                    <span>Реалізований PNL:</span> <b class="${pnlClass}">${sign}$${p.finalPnl.toFixed(4)}</b>
-                </div>
+            <div id="details-hist-${idx}" class="history-details-inner">
+                <div style="font-size: 0.85em; color: #848e9c; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px;">Деталі позицій:</div>
+                ${legsHtml}
             </div>
         </div>`;
     });
+    
     container.innerHTML = html;
 }
 

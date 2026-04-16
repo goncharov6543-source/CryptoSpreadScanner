@@ -183,7 +183,7 @@ async function fetchPositions(apiKeys) {
                                 sizeUSDT: parseFloat(p.positionValue),
                                 leverage: parseInt(p.leverage),
                                 entryPrice: parseFloat(p.avgPrice),
-                                unRealized: parseFloat(p.unrealisedPnl),
+                                unrealized: parseFloat(p.unrealisedPnl),
                                 realized: parseFloat(p.cumRealisedPnl)
                             });
                         }
@@ -229,7 +229,7 @@ async function fetchPositions(apiKeys) {
                             exchange: ex, symbol: p.contract, cleanSymbol: p.contract.replace('_', ''),
                             side: size > 0 ? 'Long' : 'Short',
                             sizeUSDT: Math.abs(size) * parseFloat(p.entry_price), 
-                            leverage: parseInt(p.leverage),
+                            leverage: parseInt(p.leverage) || 0,
                             entryPrice: parseFloat(p.entry_price),
                             unRealized: parseFloat(p.unrealised_pnl),
                             realized: parseFloat(p.realised_pnl)

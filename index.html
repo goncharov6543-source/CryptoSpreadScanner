@@ -38,7 +38,6 @@
         .top-right-group { display: flex; align-items: center; gap: 15px; }
         .global-status { color: #848e9c; font-size: 0.85em; display: flex; align-items: center; gap: 8px; }
         
-        /* ВИПРАВЛЕНО: Прибрано transform scale */
         .total-balance-badge { background: #161a1e; border: 1px solid #f0b90b; padding: 8px 16px; border-radius: 20px; font-size: 1em; font-weight: bold; color: #f0b90b; display: flex; align-items: center; gap: 8px; box-shadow: 0 0 10px rgba(240, 185, 11, 0.2); cursor: pointer; transition: 0.2s;}
         .total-balance-badge:hover { background: #2b3139; border-color: #ffe066; box-shadow: 0 0 15px rgba(240, 185, 11, 0.4); }
 
@@ -111,8 +110,15 @@
 
         /* --- СТИЛІ ДЛЯ ШИРОКИХ ПЛИТОЧОК ПОЗИЦІЙ ТА ІСТОРІЇ --- */
         .pos-container { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
-        .pos-card { background: #161a1e; border: 1px solid #2b3139; border-radius: 8px; padding: 15px 20px; display: flex; align-items: center; justify-content: space-between; transition: 0.3s; }
+        .pos-card { background: #161a1e; border: 1px solid #2b3139; border-radius: 8px; padding: 10px 20px; display: grid; grid-template-columns: 1.5fr 1fr 1.5fr 0.8fr 1.5fr; align-items: center; gap: 10px; transition: 0.3s; }
         .pos-card:hover { border-color: #f0b90b; box-shadow: 0 4px 15px rgba(240, 185, 11, 0.1); }
+
+        /* Стилі для розгортання історії */
+        .history-row { cursor: pointer; transition: background 0.2s; }
+        .history-row:hover { background: #1e2329; }
+        .history-details { display: none; background: #0b0e11; border: 1px solid #2b3139; border-top: none; border-radius: 0 0 8px 8px; padding: 15px; margin-top: -5px; margin-bottom: 10px; animation: slideDown 0.3s ease; }
+        @keyframes slideDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .history-detail-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed #2b3139; }
         
         .pos-col { display: flex; flex-direction: column; gap: 5px; }
         .pos-col.right { text-align: right; }
@@ -293,7 +299,7 @@
     </div>
 
     <div class="slider-wrapper">
-        <div class="slider-tab active" onclick="switchTab(0)">Відкриті позиції</div>
+        <div class="slider-tab active" onclick="switchTab(0)">Відкриті позиції <span id="pos-count-badge" style="display:none; margin-left:5px; font-weight:bold;">0</span></div>
         <div class="slider-tab" onclick="switchTab(1)">Фандінг</div>
         <div class="slider-tab" onclick="switchTab(2)">Арбітраж</div>
         <div class="slider-tab" onclick="switchTab(3)">Історія</div>

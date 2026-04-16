@@ -514,6 +514,18 @@ async function renderPositionsTab() {
     try {
         const posArray = await fetchPositions(settings.apiKeys);
         
+        // ДОДАНО: Логіка лічильника відкритих позицій
+        const badge = document.getElementById('pos-count-badge');
+        if (badge) {
+            if (posArray.length > 0) {
+                badge.innerText = posArray.length;
+                badge.style.display = 'inline-block';
+                badge.style.color = '#00d67c';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        
         const currentPosIds = new Set();
         posArray.forEach(p => {
             const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
@@ -594,30 +606,31 @@ async function renderPositionsTab() {
             const pnlClass = estProfit >= 0 ? 'pnl-green' : 'pnl-red';
             const sign = estProfit > 0 ? '+' : '';
 
+            // Оновлено HTML позицій під нову сітку (grid)
             html += `
             <div class="pos-card">
-                <div class="pos-col" style="flex: 1.2;">
+                <div class="pos-col">
                     <div class="pos-label">Монета</div>
                     <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
                     <div class="pos-subval" style="margin-top:4px;">${exSides.join(' / ')}</div>
                 </div>
                 
-                <div class="pos-col center" style="flex: 1;">
+                <div class="pos-col center">
                     <div class="pos-label">Розмір (USDT)</div>
                     <div class="pos-value">${formatCurrency(totalSize)}</div>
                 </div>
 
-                <div class="pos-col center" style="flex: 1.2;">
+                <div class="pos-col center">
                     <div class="pos-label">Вхідна ціна</div>
                     <div class="pos-value">${prices.join(' <span style="color:#848e9c;">/</span> ')}</div>
                 </div>
 
-                <div class="pos-col center" style="flex: 0.8;">
+                <div class="pos-col center">
                     <div class="pos-label">Спред Входу</div>
                     <div class="pos-value" style="color: #3498db;">${spreadStr}</div>
                 </div>
 
-                <div class="pos-col right" style="flex: 1.2;">
+                <div class="pos-col right">
                     <div style="display:flex; justify-content: flex-end; gap: 15px; margin-bottom: 5px;">
                         <div class="pos-col right">
                             <div class="pos-label">Реалізований</div>
@@ -644,6 +657,14 @@ async function renderPositionsTab() {
     }
 }
 
+// ДОДАНО: Функція для розгортання історії
+window.toggleHistoryDetails = function(id) {
+    const el = document.getElementById('details-' + id);
+    if(el) {
+        el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+    }
+};
+
 // --- ВКЛАДКА ІСТОРІЇ ---
 function renderHistoryTab() {
     const container = document.getElementById('history-content');
@@ -654,36 +675,54 @@ function renderHistoryTab() {
     }
 
     let html = '';
-    settings.positionHistory.forEach(p => {
-        const oDate = new Date(p.openDate || p.closeDate).toLocaleString('uk-UA');
-        const cDate = new Date(p.closeDate).toLocaleString('uk-UA');
-        const col = p.side === 'Long' ? 'color:#00d67c;' : 'color:#e74c3c;';
+    settings.positionHistory.forEach((p, idx) => {
         const pnlClass = p.finalPnl >= 0 ? 'pnl-green' : 'pnl-red';
         const sign = p.finalPnl > 0 ? '+' : '';
 
+        // Оновлено HTML історії з клікабельним рядком і випадаючим меню
         html += `
-        <div class="pos-card" style="opacity: 0.9;">
-            <div class="pos-col" style="flex: 1.2;">
-                <div class="pos-label">Монета (Закрита)</div>
-                <div class="pos-value" style="font-size: 1.3em;">${p.cleanSymbol}</div>
-                <div class="pos-subval" style="margin-top:4px;"><span style="font-weight:bold;">${p.exchange}</span> (<span style="${col}">${p.side} ${p.leverage}x</span>)</div>
+        <div class="history-group">
+            <div class="pos-card history-row" onclick="toggleHistoryDetails(${idx})">
+                <div class="pos-col">
+                    <div class="pos-label">Монета (Закрита)</div>
+                    <div class="pos-value" style="font-size: 1.2em;">${p.cleanSymbol}</div>
+                </div>
+                
+                <div class="pos-col center">
+                    <div class="pos-label">Розмір</div>
+                    <div class="pos-value">${formatCurrency(p.sizeUSDT || 0)}</div>
+                </div>
+
+                <div class="pos-col center">
+                    <div class="pos-label">Час закриття</div>
+                    <div class="pos-value">${new Date(p.closeDate).toLocaleString('uk-UA')}</div>
+                </div>
+                
+                <div class="pos-col center">
+                    <div class="pos-label">Біржа</div>
+                    <div class="pos-value">${p.exchange}</div>
+                </div>
+
+                <div class="pos-col right">
+                    <div class="pos-label">Фінальний PNL</div>
+                    <div class="pos-total-pnl ${pnlClass}" style="display:inline-block; margin-top:5px;">
+                        ${sign}$${p.finalPnl.toFixed(2)}
+                    </div>
+                </div>
             </div>
             
-            <div class="pos-col center" style="flex: 1;">
-                <div class="pos-label">Розмір (USDT)</div>
-                <div class="pos-value">${formatCurrency(p.sizeUSDT || 0)}</div>
-            </div>
-
-            <div class="pos-col center" style="flex: 1.5;">
-                <div class="pos-label">Час життя позиції</div>
-                <div class="pos-subval">Відкр: <span style="color:#fff;">${oDate}</span></div>
-                <div class="pos-subval">Закр: <span style="color:#fff;">${cDate}</span></div>
-            </div>
-
-            <div class="pos-col right" style="flex: 1.2;">
-                <div class="pos-label">Фінальний PNL</div>
-                <div class="pos-total-pnl ${pnlClass}" style="display:inline-block; margin-top:5px;">
-                    ${sign}$${p.finalPnl.toFixed(2)}
+            <div id="details-${idx}" class="history-details">
+                <div class="history-detail-item">
+                    <span>Біржа:</span> <b>${p.exchange}</b>
+                </div>
+                <div class="history-detail-item">
+                    <span>Сторона:</span> <b style="${p.side==='Long'?'color:#00d67c':'color:#e74c3c'}">${p.side} ${p.leverage}x</b>
+                </div>
+                <div class="history-detail-item">
+                    <span>Ціна входу:</span> <b>$${p.entryPrice.toFixed(4)}</b>
+                </div>
+                <div class="history-detail-item">
+                    <span>Реалізований PNL:</span> <b class="${pnlClass}">${sign}$${p.finalPnl.toFixed(4)}</b>
                 </div>
             </div>
         </div>`;
@@ -790,8 +829,14 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
     
-    const bR = buyData.rate * 100; const bRStr = (bR>0?'-':'+')+Math.abs(bR).toFixed(4)+'%'; const bRCol = bR>0?'#e74c3c':'#00d67c';
-    const sR = sellData.rate * 100; const sRStr = (sR>0?'+':'-')+Math.abs(sR).toFixed(4)+'%'; const sRCol = sR>0?'#00d67c':'#e74c3c';
+    // ФІКС ЗНАКІВ ФАНДІНГУ: тепер показуємо чисті значення
+    const bR = buyData.rate * 100; 
+    const bRStr = (bR > 0 ? '+' : '') + bR.toFixed(4) + '%'; 
+    const bRCol = bR > 0 ? '#e74c3c' : '#00d67c';
+
+    const sR = sellData.rate * 100; 
+    const sRStr = (sR > 0 ? '+' : '') + sR.toFixed(4) + '%'; 
+    const sRCol = sR > 0 ? '#00d67c' : '#e74c3c';
 
     const bLink = getLinks(buyEx, buyData.symbol, cleanSymbol).fUrl;
     const sLink = getLinks(sellEx, sellData.symbol, cleanSymbol).fUrl;

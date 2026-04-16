@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Crypto Arb Pro</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+    <style>
+        /* --- БАЗОВІ СТИЛІ ТА СКРОЛБАР --- */
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0b0e11; color: #EAECEF; margin: 0; padding: 20px; overflow-x: hidden; }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0b0e11; }
+        ::-webkit-scrollbar-thumb { background: #2b3139; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3c444f; }
+
+        /* --- ВЕРХНЯ ПАНЕЛЬ --- */
+        .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; position: relative; z-index: 50; }
+        .top-left-group { display: flex; align-items: center; gap: 15px; }
+        
+        .settings-icon-wrapper { position: relative; cursor: pointer; width: 44px; height: 44px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 50%; transition: background 0.2s; }
+        .settings-icon-wrapper:hover { background: #1e2329; }
+        .settings-icon { width: 24px; height: 24px; fill: #848e9c; transition: fill 0.2s; }
+        .settings-icon-wrapper:hover .settings-icon { fill: #EAECEF; }
+        
+        .api-status-btn { background: #1e2329; border: 1px solid #2b3139; padding: 8px 16px; border-radius: 20px; font-size: 0.95em; font-weight: bold; cursor: pointer; transition: 0.2s; display: flex; align-items: center; gap: 8px; color: #848e9c; user-select: none;}
+        .api-status-btn:hover { background: #2b3139; }
+        .api-status-btn.green { border-color: #00d67c; color: #00d67c; background: rgba(0, 214, 124, 0.1); }
+        .api-status-btn.red { border-color: #e74c3c; color: #e74c3c; background: rgba(231, 76, 60, 0.1); }
+        
+        .ex-dropdown { position: absolute; top: 55px; left: 60px; background: #1e2329; border: 1px solid #3c444f; border-radius: 8px; width: 280px; box-shadow: 0 10px 25px rgba(0,0,0,0.7); z-index: 100; opacity: 0; pointer-events: none; transform: translateY(-10px); transition: 0.2s; display: flex; flex-direction: column; overflow: hidden;}
+        .ex-dropdown.active { opacity: 1; pointer-events: all; transform: translateY(0); }
+        .ex-drop-item { padding: 12px 15px; border-bottom: 1px solid #2b3139; display: flex; flex-direction: column; gap: 5px; }
+        .ex-drop-item:last-child { border-bottom: none; }
+        .ex-drop-header { display: flex; justify-content: space-between; font-weight: bold; font-size: 0.95em;}
+        .ex-drop-error { font-size: 0.8em; color: #e74c3c; background: rgba(231, 76, 60, 0.1); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(231, 76, 60, 0.3);}
+        .ex-drop-empty { padding: 20px; text-align: center; color: #848e9c; font-size: 0.9em; }
+
+        .top-right-group { display: flex; align-items: center; gap: 15px; }
+        .global-status { color: #848e9c; font-size: 0.85em; display: flex; align-items: center; gap: 8px; }
+        
+        /* ВИПРАВЛЕНО: Прибрано transform scale */
+        .total-balance-badge { background: #161a1e; border: 1px solid #f0b90b; padding: 8px 16px; border-radius: 20px; font-size: 1em; font-weight: bold; color: #f0b90b; display: flex; align-items: center; gap: 8px; box-shadow: 0 0 10px rgba(240, 185, 11, 0.2); cursor: pointer; transition: 0.2s;}
+        .total-balance-badge:hover { background: #2b3139; border-color: #ffe066; box-shadow: 0 0 15px rgba(240, 185, 11, 0.4); }
+
+        /* --- БОКОВЕ МЕНЮ ТА МОДАЛКИ --- */
+        .sidebar-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px); z-index: 99; opacity: 0; pointer-events: none; transition: opacity 0.3s; }
+        .sidebar-overlay.active { opacity: 1; pointer-events: all; }
+        .sidebar { position: fixed; top: 0; left: -300px; width: 280px; height: 100vh; background: #161a1e; border-right: 1px solid #2b3139; z-index: 100; transition: transform 0.3s; display: flex; flex-direction: column; box-shadow: 5px 0 15px rgba(0,0,0,0.5); }
+        .sidebar.active { transform: translateX(300px); }
+        .sidebar-header { padding: 20px; font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #2b3139; display: flex; justify-content: space-between; align-items: center;}
+        .close-sidebar { cursor: pointer; color: #848e9c; font-size: 1.5em; }
+        .close-sidebar:hover { color: #fff; }
+        .sidebar-item { padding: 15px 20px; cursor: pointer; transition: 0.2s; border-bottom: 1px solid #1e2329; display: flex; align-items: center; gap: 10px;}
+        .sidebar-item:hover { background: #2b3139; color: #f0b90b; }
+
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.8); z-index: 150; display: flex; justify-content: center; align-items: center; opacity: 0; pointer-events: none; transition: 0.2s; }
+        .modal-overlay.active { opacity: 1; pointer-events: all; }
+        .modal-content { background: #1e2329; border: 1px solid #2b3139; border-radius: 8px; width: 400px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); transform: translateY(-20px); transition: 0.3s; }
+        .modal-overlay.active .modal-content { transform: translateY(0); }
+        .modal-title { margin-top: 0; border-bottom: 1px solid #2b3139; padding-bottom: 10px; margin-bottom: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; margin-bottom: 5px; color: #848e9c; font-size: 0.9em; }
+        .form-group input, .form-group select { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 4px; background: #0b0e11; border: 1px solid #3c444f; color: #fff; outline: none; }
+        .btn-submit { width: 100%; padding: 12px; background: #f0b90b; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: 0.2s; color: #000;}
+        .btn-submit:hover { background: #ffe066; }
+        .checkbox-label { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; cursor: pointer; }
+
+        /* ВЕЛИКЕ МОДАЛЬНЕ ВІКНО ДЛЯ ГРАФІКІВ */
+        .chart-modal-content { width: 90%; max-width: 1200px; height: 80vh; display: flex; flex-direction: column; }
+        .time-filters { display: flex; gap: 10px; margin-right: 15px; }
+        .btn-time { background: #0b0e11; border: 1px solid #3c444f; color: #848e9c; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s;}
+        .btn-time.active { background: #3498db; color: #fff; border-color: #3498db; }
+        .btn-time:hover:not(.active) { background: #2b3139; color: #fff; }
+
+        /* --- ФІЛЬТР ОБ'ЄМУ --- */
+        .filter-bar { background: #161a1e; border: 1px solid #2b3139; border-radius: 8px; padding: 12px 20px; display: flex; align-items: center; justify-content: center; gap: 10px; max-width: 900px; margin: 0 auto 30px auto; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        .filter-bar span { color: #848e9c; font-weight: bold; font-size: 0.95em; }
+        .filter-bar input { background: #0b0e11; border: 1px solid #3c444f; color: #fff; padding: 8px 12px; border-radius: 4px; width: 80px; text-align: center; outline: none; font-weight: bold; }
+        .filter-bar input[type="number"]::-webkit-outer-spin-button, .filter-bar input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .filter-bar input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+        .btn-filter { background: #2b3139; color: #fff; border: 1px solid #3c444f; padding: 8px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .btn-filter:hover { background: #f0b90b; color: #000; border-color: #f0b90b; }
+        .vertical-divider { width: 1px; height: 24px; background: #3c444f; margin: 0 5px; }
+
+        /* --- СЛАЙДЕР НАВІГАЦІЇ --- */
+        .slider-wrapper { position: relative; max-width: 800px; margin: 0 auto 20px auto; border-bottom: 2px solid #2b3139; display: flex; }
+        .slider-tab { flex: 1; text-align: center; padding: 10px 0; cursor: pointer; color: #848e9c; font-weight: bold; font-size: 0.9em; transition: color 0.3s; user-select: none; letter-spacing: 1px; text-transform: uppercase; }
+        .slider-tab:hover { color: #EAECEF; }
+        .slider-tab.active { color: #f0b90b; }
+        .slider-indicator { position: absolute; bottom: -2px; height: 3px; background-color: #f0b90b; transition: transform 0.3s; border-radius: 3px; box-shadow: 0 0 10px rgba(240, 185, 11, 0.5); }
+
+        /* --- КОНТЕНТ ВКЛАДОК --- */
+        .tab-content { display: none; max-width: 1400px; margin: 0 auto; animation: fadeIn 0.4s ease; }
+        .tab-content.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        .section-title { font-size: 1.5em; margin: 20px 0; padding-left: 10px; border-left: 4px solid #f0b90b; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; margin-bottom: 40px; }
+        
+        .card { background: #1e2329; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; gap: 12px; border: 1px solid #2b3139; transition: border-color 0.3s, box-shadow 0.3s; }
+        .card:hover { border-color: #f0b90b; box-shadow: 0 0 12px rgba(240, 185, 11, 0.3); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+        .card-header-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+        .symbol { font-size: 1.3em; font-weight: bold; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;}
+        .vol-badge { background: rgba(52, 152, 219, 0.15); color: #3498db; border: 1px solid rgba(52, 152, 219, 0.3); padding: 4px 8px; border-radius: 4px; font-size: 0.85em; font-weight: bold; flex-shrink: 0; }
+        .no-spot-dot { width: 10px; height: 10px; background-color: #e74c3c; border-radius: 50%; display: inline-block; cursor: help; box-shadow: 0 0 5px rgba(231, 76, 60, 0.8); flex-shrink: 0;}
+        .buttons-row { display: flex; gap: 10px; margin-top: auto; width: 100%; }
+        .btn { flex: 1; width: 100%; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; color: #fff; transition: 0.2s; text-align: center; background: #34495e; }
+        .btn:hover { background: #465c75; }
+        .placeholder-text { text-align: center; color: #848e9c; margin-top: 50px; font-size: 1.2em; }
+
+        /* --- СТИЛІ ДЛЯ ШИРОКИХ ПЛИТОЧОК ПОЗИЦІЙ ТА ІСТОРІЇ --- */
+        .pos-container { max-width: 1000px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; }
+        .pos-card { background: #161a1e; border: 1px solid #2b3139; border-radius: 8px; padding: 15px 20px; display: flex; align-items: center; justify-content: space-between; transition: 0.3s; }
+        .pos-card:hover { border-color: #f0b90b; box-shadow: 0 4px 15px rgba(240, 185, 11, 0.1); }
+        
+        .pos-col { display: flex; flex-direction: column; gap: 5px; }
+        .pos-col.right { text-align: right; }
+        .pos-col.center { text-align: center; }
+        
+        .pos-label { font-size: 0.75em; color: #848e9c; text-transform: uppercase; letter-spacing: 0.5px; }
+        .pos-value { font-size: 1.1em; font-weight: bold; color: #fff; }
+        .pos-subval { font-size: 0.85em; color: #ccc; }
+        
+        .pnl-green { color: #00d67c !important; }
+        .pnl-red { color: #e74c3c !important; }
+        .pos-total-pnl { font-size: 1.3em; font-weight: bold; padding: 5px 10px; border-radius: 6px; background: #0b0e11; border: 1px solid #2b3139; }
+
+        /* --- АРБІТРАЖ ТА WATCH LIST --- */
+        .arb-layout { display: flex; gap: 20px; align-items: flex-start; }
+        .arb-main { flex: 1; min-width: 0; }
+        .arb-watchlist { width: 340px; flex-shrink: 0; background: #161a1e; border: 1px solid #2b3139; border-radius: 8px; padding: 15px; position: sticky; top: 20px;}
+        
+        .arb-card { background: #161a1e; border: 1px solid #2b3139; border-radius: 8px; padding: 15px; display: flex; flex-direction: column; gap: 12px; transition: border-color 0.3s, box-shadow 0.3s; position: relative; }
+        .arb-card:hover { border-color: #3498db; box-shadow: 0 0 12px rgba(52, 152, 219, 0.3); }
+        .arb-top { display: flex; justify-content: space-between; align-items: flex-start; }
+        .arb-symbol-col { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; padding-right: 10px; }
+        .arb-symbol-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .icon-action { cursor: pointer; fill: #848e9c; width: 20px; height: 20px; flex-shrink: 0; transition: 0.2s; }
+        .icon-action:hover { fill: #f0b90b; transform: scale(1.1); }
+        .icon-remove:hover { fill: #e74c3c; }
+
+        .arb-spread-box { border: 1px solid #3498db; background: rgba(52, 152, 219, 0.05); padding: 8px 12px; border-radius: 6px; text-align: center; flex-shrink: 0; }
+        .arb-spread-val { color: #3498db; font-size: 1.2em; font-weight: bold; }
+        
+        .arb-trade-box { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; border-radius: 6px; background: #0b0e11; margin-top: 5px; }
+        .arb-buy { border-left: 3px solid #00d67c; }
+        .arb-sell { border-left: 3px solid #e74c3c; }
+        
+        .arb-trade-box-left { flex: 1; min-width: 0; padding-right: 10px; overflow: hidden; }
+        .arb-trade-label { font-size: 0.8em; color: #848e9c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; width: 100%; }
+        .arb-ex-name { font-weight: bold; font-size: 1.1em; color: #fff; margin-top: 4px; }
+        .arb-funding-text { font-size: 0.75em; color: #848e9c; margin-top: 2px; }
+        
+        .arb-trade-box-right { text-align: right; flex-shrink: 0; }
+        .arb-price { font-size: 1.2em; font-weight: bold; }
+        .arb-price.green { color: #00d67c; }
+        .arb-price.red { color: #e74c3c; }
+        .arb-link { color: #3498db; font-size: 0.85em; text-decoration: none; display: block; margin-top: 4px; cursor: pointer; }
+        .arb-link:hover { text-decoration: underline; }
+        
+        .btn-chart { background: #2b3139; color: #fff; width: 100%; border: none; padding: 10px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; margin-top: auto; }
+        .btn-chart:hover { background: #3c444f; }
+
+        /* --- СИСТЕМА ПІДКАЗОК --- */
+        .tooltip-container { position: relative; cursor: help; }
+        .tooltip-content { visibility: hidden; opacity: 0; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%) translateY(-5px); background: #161a1e; border: 1px solid #3c444f; padding: 12px; border-radius: 6px; box-shadow: 0 8px 20px rgba(0,0,0,0.8); z-index: 100; width: max-content; transition: all 0.2s ease; font-size: 0.9em; pointer-events: none; }
+        .tooltip-container:hover .tooltip-content { visibility: visible; opacity: 1; transform: translateX(-50%) translateY(-10px); }
+        .tooltip-row { display: flex; justify-content: space-between; gap: 25px; padding: 4px 0; border-bottom: 1px dashed #2b3139; }
+        .tooltip-row:last-child { border-bottom: none; }
+        .tooltip-ex { font-weight: bold; color: #848e9c; }
+        .tooltip-val { font-family: monospace; font-size: 1.1em; font-weight: bold; }
+
+        .rate-container { display: flex; align-items: stretch; background: #0b0e11; border-radius: 6px; border: 1px solid #2b3139; }
+        .rate-exchange { background: #161a1e; color: #848e9c; padding: 10px 15px; display: flex; align-items: center; justify-content: center; font-weight: bold; border-right: 1px solid #2b3139; font-size: 0.85em; border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
+        .rate-box { flex: 1; text-align: center; padding: 10px; font-size: 1.4em; font-weight: bold; border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+        .rate-positive { color: #e74c3c; } 
+        .rate-negative { color: #00d67c; }
+
+        /* --- СИСТЕМА СПОВІЩЕНЬ --- */
+        .toast-container { position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 1000; }
+        .toast { background: #1e2329; color: #fff; padding: 15px 20px; border-radius: 8px; border-left: 4px solid #f0b90b; display: flex; flex-direction: column; gap: 5px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); animation: slideLeft 0.3s forwards; max-width: 350px; }
+        .toast.error { border-left-color: #e74c3c; color: #e74c3c; flex-direction: row; align-items: center; justify-content: space-between;}
+        .toast-title { font-weight: bold; font-size: 1em; color: #f0b90b; }
+        .toast-text { font-size: 0.9em; color: #ccc; }
+        .toast-close { cursor: pointer; color: #848e9c; font-size: 1.2em; transition: 0.2s; margin-left: auto; }
+        .toast-close:hover { color: #fff; }
+        @keyframes slideLeft { 0% { transform: translateX(100%); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="top-bar">
+        <div class="top-left-group">
+            <div class="settings-icon-wrapper" onclick="toggleSidebar()">
+                <svg class="settings-icon" viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+            </div>
+            
+            <div style="position: relative;">
+                <div id="btn-ex-status" class="api-status-btn" onclick="toggleExStatus()">🏦 Біржі</div>
+                <div id="ex-dropdown" class="ex-dropdown">
+                    <div class="ex-drop-empty">Немає підключених бірж</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="top-right-group">
+            <div class="global-status" id="global-status">🕒 Оновлено: --:--:-- | ⚡ Ping: --s</div>
+            <div class="total-balance-badge" id="total-balance-badge" title="Історія балансу" onclick="openBalanceChart()">👤 $0.00</div>
+        </div>
+    </div>
+
+    <div class="sidebar-overlay" id="sidebar-overlay" onclick="toggleSidebar()"></div>
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">Меню Налаштувань<span class="close-sidebar" onclick="toggleSidebar()">×</span></div>
+        <div class="sidebar-item" onclick="openModal('api-modal')">🔑 Добавити API</div>
+        <div class="sidebar-item" onclick="openModal('display-modal')">👁️ Налаштування відображення</div>
+        <div class="sidebar-item" onclick="openModal('notif-modal')">🔔 Сповіщення (Звук)</div>
+        <div class="sidebar-item" onclick="openModal('launch-modal')">🚀 Параметри запуску</div>
+    </div>
+
+    <div class="modal-overlay" id="api-modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Підключення API біржі</h3>
+            <div class="form-group"><label>Оберіть біржу</label><select id="api-exchange"><option value="MEXC">MEXC</option><option value="Gate.io">Gate.io</option><option value="Binance">Binance</option><option value="Bybit">Bybit</option><option value="Bitget">Bitget</option></select></div>
+            <div class="form-group"><label>API Key</label><input type="text" id="api-key" placeholder="Введіть ваш публічний ключ"></div>
+            <div class="form-group"><label>API Secret</label><input type="password" id="api-secret" placeholder="Введіть ваш секретний ключ"></div>
+            <button class="btn-submit" onclick="saveApiKeys()">Підключити біржу</button>
+            <button class="btn-submit" style="background: #2b3139; color: #fff; margin-top: 10px;" onclick="closeModal('api-modal')">Скасувати</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="display-modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Біржі для парсингу</h3>
+            <p style="font-size: 0.85em; color: #848e9c; margin-bottom: 15px;">Оберіть біржі, які будуть брати участь у пошуку арбітражу:</p>
+            <label class="checkbox-label"><input type="checkbox" value="MEXC" class="ex-filter"> MEXC</label>
+            <label class="checkbox-label"><input type="checkbox" value="Gate.io" class="ex-filter"> Gate.io</label>
+            <label class="checkbox-label"><input type="checkbox" value="Binance" class="ex-filter"> Binance</label>
+            <label class="checkbox-label"><input type="checkbox" value="Bybit" class="ex-filter"> Bybit</label>
+            <label class="checkbox-label"><input type="checkbox" value="Bitget" class="ex-filter"> Bitget</label>
+            <button class="btn-submit" style="margin-top: 20px;" onclick="saveDisplaySettings()">Зберегти та Оновити</button>
+            <button class="btn-submit" style="background: #2b3139; color: #fff; margin-top: 10px;" onclick="closeModal('display-modal')">Закрити</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="notif-modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Сповіщення (Паттерни та Алерти)</h3>
+            <div class="form-group">
+                <label>Виберіть звук (з папки assets)</label>
+                <select id="sound-file"></select>
+            </div>
+            <div class="form-group">
+                <label>Гучність звуку: <span id="vol-val">50%</span></label>
+                <input type="range" id="sound-volume" min="0" max="100" value="50" oninput="document.getElementById('vol-val').innerText=this.value+'%'">
+            </div>
+            <button class="btn-submit" style="background: #34495e; color:#fff;" onclick="testSound()">🔊 Прослухати</button>
+            <button class="btn-submit" style="margin-top:20px;" onclick="saveSoundSettings()">Зберегти</button>
+            <button class="btn-submit" style="background: #2b3139; color: #fff; margin-top: 10px;" onclick="closeModal('notif-modal')">Закрити</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="launch-modal">
+        <div class="modal-content">
+            <h3 class="modal-title">Параметри запуску</h3>
+            <label class="checkbox-label" title="При натисканні 'Х' програма сховається в трей. Щоб закрити повністю - правий клік по іконці в треї."><input type="checkbox" id="setting-tray"> Згортати в трей при закритті</label>
+            <label class="checkbox-label"><input type="checkbox" id="setting-autostart"> Запускати автоматично з Windows</label>
+            <button class="btn-submit" style="margin-top: 20px;" onclick="saveLaunchSettings()">Зберегти</button>
+            <button class="btn-submit" style="background: #2b3139; color: #fff; margin-top: 10px;" onclick="closeModal('launch-modal')">Закрити</button>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="balance-chart-modal">
+        <div class="modal-content chart-modal-content">
+            <div class="sidebar-header" style="padding: 0 0 15px 0; border-bottom: 1px solid #2b3139; margin-bottom: 15px;">
+                <span style="color: #fff;">📈 Історія Сумарного Балансу</span>
+                <div style="display:flex; align-items:center;">
+                    <div class="time-filters">
+                        <button class="btn-time active" onclick="renderBalanceChart(24)">24 Години</button>
+                        <button class="btn-time" onclick="renderBalanceChart(24*7)">7 Днів</button>
+                        <button class="btn-time" onclick="renderBalanceChart(24*30)">30 Днів</button>
+                        <button class="btn-time" onclick="renderBalanceChart('all')">Весь час</button>
+                    </div>
+                    <span class="close-sidebar" onclick="closeModal('balance-chart-modal')">×</span>
+                </div>
+            </div>
+            <div style="flex: 1; position: relative; display: flex; align-items: center; justify-content: center;">
+                <div id="bal-chart-empty" style="color:#848e9c; display:none;">Немає достатньо даних для графіку.</div>
+                <canvas id="balanceChartCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="slider-wrapper">
+        <div class="slider-tab active" onclick="switchTab(0)">Відкриті позиції</div>
+        <div class="slider-tab" onclick="switchTab(1)">Фандінг</div>
+        <div class="slider-tab" onclick="switchTab(2)">Арбітраж</div>
+        <div class="slider-tab" onclick="switchTab(3)">Історія</div>
+        <div class="slider-indicator" id="slider-indicator"></div>
+    </div>
+
+    <div id="filter-bar-container" style="display: none;">
+        <div class="filter-bar">
+            <span>⚙️ Ліквідність:</span>
+            <input type="number" id="min-vol" placeholder="Min"> <span style="color: #444;">—</span> <input type="number" id="max-vol" placeholder="Max"> <span>тис. $</span>
+            
+            <div class="vertical-divider" id="alert-divider"></div>
+            
+            <div id="spread-alert-group" style="display:flex; align-items:center; gap:10px;">
+                <span>🔔 Спред-алерт: ></span>
+                <input type="number" id="alert-spread" step="0.5" style="width: 60px;"> <span>%</span>
+            </div>
+            
+            <button class="btn-filter" onclick="saveFiltersAndUpdate()" style="margin-left: 10px;">Фільтрувати</button>
+        </div>
+    </div>
+
+    <div id="tab-0" class="tab-content active">
+        <div id="pos-loader" class="placeholder-text" style="display:none;">⏳ Оновлення відкритих позицій...</div>
+        <div id="pos-content" class="pos-container">
+            </div>
+    </div>
+
+    <div id="tab-1" class="tab-content">
+        <div id="funding-loader" class="placeholder-text">⏳ Завантаження та аналіз ринку...</div>
+        <div id="funding-content" style="display: none;">
+            <div class="section-title" style="border-color: #00d67c;">🟢 Топ 10 Мінусових Фандінгів (Лонг отримує)</div>
+            <div id="negative-grid" class="grid"></div>
+            <div class="section-title" style="border-color: #e74c3c;">🔴 Топ 10 Плюсових Фандінгів (Шорт отримує)</div>
+            <div id="positive-grid" class="grid"></div>
+        </div>
+    </div>
+
+    <div id="tab-2" class="tab-content">
+        <div id="arb-loader" class="placeholder-text">⏳ Пошук можливостей для арбітражу ціни...</div>
+        <div id="arb-content" class="arb-layout" style="display: none;">
+            <div class="arb-main">
+                <div class="section-title" style="border-color: #3498db; margin-top:0;">⚖️ Основний список спредів</div>
+                <div id="arb-grid" class="grid"></div>
+            </div>
+            
+            <div class="arb-watchlist">
+                <div style="font-size: 1.2em; font-weight: bold; border-bottom: 1px solid #2b3139; padding-bottom: 10px; margin-bottom: 15px; display: flex; align-items: center; gap: 8px;">
+                    Watch List <span id="wl-count" style="background:#3498db; color:#fff; font-size:0.7em; padding:2px 8px; border-radius:10px;">0</span>
+                </div>
+                <div id="watchlist-grid" style="display: flex; flex-direction: column; gap: 15px;">
+                    <div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">Натисніть на 👁️ біля монети, щоб додати її сюди.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab-3" class="tab-content">
+        <div id="history-content" class="pos-container">
+            <div class="placeholder-text">У вас ще немає закритих позицій в історії.</div>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

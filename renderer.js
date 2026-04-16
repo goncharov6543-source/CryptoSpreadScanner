@@ -13,8 +13,8 @@ const audioAlert = new Audio();
 let globalCrossData = {}; 
 let patternStats = {}; 
 let alertedCoins = new Set();
-let lastKnownPositions = {}; // Для відстеження історії закритих угод
-let lastAnomalyAlerts = {};  // Для обмеження частоти спаму звуком по аномаліям
+let lastKnownPositions = {}; 
+let lastAnomalyAlerts = {};  
 
 // --- НАЛАШТУВАННЯ ТА ЗБЕРЕЖЕННЯ (Persistence) ---
 let settings = {
@@ -284,20 +284,24 @@ window.switchTab = function(index) {
     if (index === 3) renderHistoryTab(); 
 };
 
-window.onload = () => {
+// ФІКС: Оновлена логіка завантаження при старті
+window.onload = async () => {
     loadSettingsFromLocal();
     loadSoundFiles();
     window.switchTab(0); 
     
-    // Відновлення патернів при старті для вже існуючого вочліста
+    // Спочатку отримуємо дані ринку, щоб globalCrossData була готова
+    await fetchMarketData();
+
+    // Тепер відновлюємо патерни для вочліста
     if (settings.watchlist && settings.watchlist.length > 0) {
-        settings.watchlist.forEach(item => {
-            calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
-        });
+        for (const item of settings.watchlist) {
+            await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
+        }
     }
 
-    if (typeof processWatchlist === 'function') processWatchlist(); 
-    fetchMarketData();
+    // Тільки тепер малюємо вочліст
+    processWatchlist(); 
 };
 
 window.toggleSidebar = function() {
@@ -687,7 +691,7 @@ function renderHistoryTab() {
     container.innerHTML = html;
 }
 
-// --- РЕНДЕР ФАНДІНГУ (ОНОВЛЕНО: додано кнопки графіків) ---
+// --- РЕНДЕР ФАНДІНГУ ---
 function renderFundingGrids(posData, negData) {
     document.getElementById('funding-loader').style.display = 'none';
     document.getElementById('funding-content').style.display = 'block';
@@ -698,7 +702,6 @@ function renderFundingGrids(posData, negData) {
         const { fUrl } = getLinks(item.exchange, item.symbol, item.cleanSymbol);
         const tooltipHtml = generateTooltipHtml(item.allRatesMap, true);
         
-        // Знаходимо іншу доступну біржу для порівняння ціни на графіку
         const counterpartEx = settings.activeExchanges.find(ex => ex !== item.exchange && item.allRatesMap[ex] !== undefined);
         const chartBtn = counterpartEx 
             ? `<button class="btn-chart" style="margin-top: 8px; background: #2b3139;" onclick="openChartWindow('${item.cleanSymbol}', '${item.exchange}', '${counterpartEx}')">📊 Спред з ${counterpartEx}</button>`
@@ -728,7 +731,6 @@ function renderFundingGrids(posData, negData) {
         const { fUrl, sUrl } = getLinks(item.exchange, item.symbol, item.cleanSymbol);
         const clickHandler = item.hasSpot ? `openLinks('${fUrl}', '${sUrl}')` : `openLinks('${fUrl}')`;
 
-        // Знаходимо іншу доступну біржу для порівняння ціни на графіку
         const counterpartEx = settings.activeExchanges.find(ex => ex !== item.exchange && item.allRatesMap[ex] !== undefined);
         const chartBtn = counterpartEx 
             ? `<button class="btn-chart" style="margin-top: 8px; background: #2b3139;" onclick="openChartWindow('${item.cleanSymbol}', '${item.exchange}', '${counterpartEx}')">📊 Спред з ${counterpartEx}</button>`
@@ -772,6 +774,18 @@ function renderArbitrageGrid(arbData) {
     grid.innerHTML = html;
 }
 
+// ФІКС: Функція Mute
+window.toggleMute = function(cleanSymbol) {
+    const item = settings.watchlist.find(i => i.cleanSymbol === cleanSymbol);
+    if (item) {
+        item.isMuted = !item.isMuted;
+        saveSettingsToLocal();
+        processWatchlist(); 
+        const status = item.isMuted ? 'вимкнено' : 'увімкнено';
+        window.showToast('Сповіщення', `Звук для ${cleanSymbol} ${status}.`);
+    }
+};
+
 function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, isWatchlist) {
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
@@ -782,7 +796,9 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     const bLink = getLinks(buyEx, buyData.symbol, cleanSymbol).fUrl;
     const sLink = getLinks(sellEx, sellData.symbol, cleanSymbol).fUrl;
 
-    const inWl = settings.watchlist.some(i => i.cleanSymbol === cleanSymbol);
+    const inWl = settings.watchlist.find(i => i.cleanSymbol === cleanSymbol);
+    const isMuted = inWl ? inWl.isMuted : false;
+
     let iconSvg = '';
     if(isWatchlist) {
         iconSvg = `<svg class="icon-action icon-remove" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}')"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
@@ -791,7 +807,15 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
         iconSvg = `<svg class="icon-action eye-icon-${cleanSymbol}" style="fill:${eyeColor};" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}','${buyEx}','${sellEx}')"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`;
     }
 
-    // --- ДОДАНА ЛОГІКА СЕРЕДНЬОГО СПРЕДУ ДЛЯ WATCH LIST ---
+    // Іконка дзвіночка для вочліста
+    const bellIcon = `
+        <svg class="icon-action" style="fill: ${isMuted ? '#e74c3c' : '#f0b90b'}; margin-left: 8px;" 
+             viewBox="0 0 24 24" onclick="toggleMute('${cleanSymbol}')" title="${isMuted ? 'Увімкнути звук' : 'Вимкнути звук'}">
+            ${isMuted 
+                ? '<path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6.7-5.31V10c0-3.44-1.84-6.31-5.06-7.09V2.12c0-.62-.51-1.12-1.13-1.12s-1.13.5-1.13 1.12v.79C8.22 3.69 6.38 6.56 6.38 10v6.69L4 19.07v.93h16v-.93l-2.3-2.38zM4.34 2.93L2.93 4.34l16.73 16.73 1.41-1.41L4.34 2.93z" />' 
+                : '<path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>'}
+        </svg>`;
+
     let avgSpreadHtml = '';
     if (isWatchlist) {
         if (patternStats[cleanSymbol] && patternStats[cleanSymbol].isReady) {
@@ -808,6 +832,7 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                     <div class="arb-symbol-row">
                         ${iconSvg}
                         <span class="symbol" title="${cleanSymbol}">${cleanSymbol}</span>
+                        ${isWatchlist ? bellIcon : ''}
                     </div>
                     <span class="vol-badge" style="width: max-content;">Vol: ${formatCurrency(maxVol)}</span>
                 </div>
@@ -852,8 +877,8 @@ const chartServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${chartPort}`);
     if (url.pathname === '/chart') {
         const symbol = url.searchParams.get('symbol');
-        const ex1 = url.searchParams.get('ex1'); // Sell
-        const ex2 = url.searchParams.get('ex2'); // Buy
+        const ex1 = url.searchParams.get('ex1'); 
+        const ex2 = url.searchParams.get('ex2'); 
         return generateChartPage(symbol, ex1, ex2, res);
     }
     res.writeHead(404); res.end();
@@ -998,7 +1023,6 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
         let sum = 0;
         let max = -Infinity;
 
-        // Рахуємо спреди за останні 12 годин
         for (let i = 0; i < minLength; i++) {
             const sp = (((s2[i].close - s1[i].close) / s1[i].close) * 100);
             spreads.push(sp);
@@ -1008,11 +1032,8 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
 
         const avg = sum / minLength;
 
-        // Зберігаємо "портрет" монети в пам'ять
         patternStats[symbol] = { avg, max, isReady: true };
-        console.log(`[WatchList] Патерн ${symbol}: Середнє ${avg.toFixed(2)}%, Макс ${max.toFixed(2)}%`);
         
-        // Оновлюємо інтерфейс, якщо ми на вкладці арбітражу, щоб показати цифри замість ⏳
         if (document.getElementById('tab-2').classList.contains('active')) {
             window.processWatchlist();
         }
@@ -1030,19 +1051,19 @@ window.toggleWatchlist = function(cleanSymbol, buyEx, sellEx) {
     
     if (index > -1) {
         settings.watchlist.splice(index, 1);
-        delete patternStats[cleanSymbol]; // Видаляємо патерн з пам'яті
-        window.showToast('Watch List', `Монету ${cleanSymbol} видалено з відстеження.`);
+        delete patternStats[cleanSymbol]; 
+        window.showToast('Watch List', `Монету ${cleanSymbol} видалено.`);
     } else {
-        settings.watchlist.push({ cleanSymbol, buyEx, sellEx });
-        window.showToast('Watch List', `Додано ${cleanSymbol}. Аналізую історію за 12 годин...`);
-        calculateCoinPattern(cleanSymbol, buyEx, sellEx); // Формуємо патерн!
+        // ФІКС: додаємо isMuted за замовчуванням
+        settings.watchlist.push({ cleanSymbol, buyEx, sellEx, isMuted: false });
+        window.showToast('Watch List', `Додано ${cleanSymbol}. Аналізую історію...`);
+        calculateCoinPattern(cleanSymbol, buyEx, sellEx); 
         added = true;
     }
     
     saveSettingsToLocal();
-    processWatchlist(); // Оновлюємо ТІЛЬКИ праву панель
+    processWatchlist(); 
     
-    // ПЛАВНА АНІМАЦІЯ: міняємо колір ока без перезавантаження сторінки
     const eyeIcons = document.querySelectorAll(`.eye-icon-${cleanSymbol}`);
     eyeIcons.forEach(icon => {
         icon.style.fill = added ? '#f0b90b' : '#848e9c';
@@ -1062,7 +1083,6 @@ window.processWatchlist = function() {
     wlCount.innerText = settings.watchlist.length;
     let html = '';
 
-    // Якщо дані з бірж ще не завантажились
     if (!isDataLoaded || !globalCrossData) {
         wlGrid.innerHTML = `<div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">⏳ Очікування даних ринку...</div>`;
         return;
@@ -1071,48 +1091,40 @@ window.processWatchlist = function() {
     settings.watchlist.forEach(item => {
         const symData = globalCrossData[item.cleanSymbol];
         
-        // Перевіряємо, чи є зараз актуальні дані по цій монеті на обраних біржах
         if (symData && symData[item.buyEx] && symData[item.sellEx]) {
             const bData = symData[item.buyEx];
             const sData = symData[item.sellEx];
-
-            // Вираховуємо спред у реальному часі
             const spread = ((sData.bid - bData.ask) / bData.ask) * 100;
 
-            // --- ЛОГІКА ПОРІВНЯННЯ З ПАТЕРНОМ ---
             if (patternStats[item.cleanSymbol] && patternStats[item.cleanSymbol].isReady) {
                 const pattern = patternStats[item.cleanSymbol];
-                
-                // Аномалія: Спред має бути мінімум 1%, і при цьому більшим за свій (Середній + 1.5%) АБО більшим за (Максимальний + 0.5%)
                 const anomalyThreshold = Math.max(pattern.avg + 1.5, pattern.max + 0.5, 1.0);
 
                 if (spread >= anomalyThreshold) {
                     const now = Date.now();
-                    // Спамимо звуком не частіше ніж раз на 5 хвилин для однієї монети
-                    if (!lastAnomalyAlerts[item.cleanSymbol] || (now - lastAnomalyAlerts[item.cleanSymbol] > 5 * 60 * 1000)) {
+                    // ФІКС: Перевірка !item.isMuted перед звуком
+                    if (!item.isMuted && (!lastAnomalyAlerts[item.cleanSymbol] || (now - lastAnomalyAlerts[item.cleanSymbol] > 5 * 60 * 1000))) {
                         playAlert();
                         window.showToast(
-                            `🚨 ПРОБІЙ ПАТЕРНУ: ${item.cleanSymbol} 🚨`,
-                            `Спред різко виріс!<br>Поточний: <b style="color:#00d67c">${spread.toFixed(2)}%</b><br>Історичний макс: <b>${pattern.max.toFixed(2)}%</b>`
+                            `🚨 ПРОБІЙ ПАТЕРНУ: ${item.cleanSymbol}`,
+                            `Поточний спред: <b style="color:#00d67c">${spread.toFixed(2)}%</b>`
                         );
                         lastAnomalyAlerts[item.cleanSymbol] = now;
                     }
                 }
             }
-            // ------------------------------------
 
             html += generateArbCardHtml(
                 item.cleanSymbol, spread,
                 item.buyEx, { symbol: bData.symbol, ask: bData.ask, rate: bData.rate, vol: bData.vol },
                 item.sellEx, { symbol: sData.symbol, bid: sData.bid, rate: sData.rate, vol: sData.vol },
-                true // Передаємо true, щоб відмалювати іконку "хрестика" замість "ока"
+                true 
             );
         } else {
-            // Якщо монета зараз не підходить під фільтри об'єму або біржа не відповідає
             html += `
             <div class="arb-card" style="opacity: 0.6; text-align:center; padding: 20px;">
                 <div style="font-weight:bold; margin-bottom:10px;">${item.cleanSymbol}</div>
-                <div style="font-size:0.85em; color:#848e9c;">Немає актуальних даних або не проходить по фільтру ліквідності.</div>
+                <div style="font-size:0.85em; color:#848e9c;">Немає даних.</div>
                 <button class="btn-submit" style="background:#e74c3c; color:#fff; width:auto; padding:5px 15px; margin-top:10px;" onclick="toggleWatchlist('${item.cleanSymbol}')">Видалити</button>
             </div>`;
         }
@@ -1122,13 +1134,10 @@ window.processWatchlist = function() {
 };
 
 // === ЛОГІКА ОНОВЛЕНЬ ===
-// Слухаємо сигнал від main.js, що оновлення завантажене
 ipcRenderer.on('update_downloaded', () => {
-    // Показуємо банер
     document.getElementById('update-banner').style.display = 'flex';
 });
 
-// Функція, яка викликається при кліку на кнопку "Перезапустити та Оновити"
 window.installUpdate = function() {
     ipcRenderer.send('restart_app');
 };
@@ -1140,8 +1149,6 @@ setInterval(() => {
     const isModal = document.querySelectorAll('.modal-overlay.active').length > 0;
     
     if ((isAct1 || isAct2) && !isModal) fetchMarketData();
-    
-    // Оновлюємо позиції рідше (раз на 15 сек, якщо відкрита вкладка)
     if (isAct0 && !isModal) renderPositionsTab();
 
 }, 15000);

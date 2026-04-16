@@ -687,7 +687,7 @@ function renderHistoryTab() {
     container.innerHTML = html;
 }
 
-// --- РЕНДЕР ФАНДІНГУ ---
+// --- РЕНДЕР ФАНДІНГУ (ОНОВЛЕНО: додано кнопки графіків) ---
 function renderFundingGrids(posData, negData) {
     document.getElementById('funding-loader').style.display = 'none';
     document.getElementById('funding-content').style.display = 'block';
@@ -698,6 +698,12 @@ function renderFundingGrids(posData, negData) {
         const { fUrl } = getLinks(item.exchange, item.symbol, item.cleanSymbol);
         const tooltipHtml = generateTooltipHtml(item.allRatesMap, true);
         
+        // Знаходимо іншу доступну біржу для порівняння ціни на графіку
+        const counterpartEx = settings.activeExchanges.find(ex => ex !== item.exchange && item.allRatesMap[ex] !== undefined);
+        const chartBtn = counterpartEx 
+            ? `<button class="btn-chart" style="margin-top: 8px; background: #2b3139;" onclick="openChartWindow('${item.cleanSymbol}', '${item.exchange}', '${counterpartEx}')">📊 Спред з ${counterpartEx}</button>`
+            : '';
+
         negHtml += `
             <div class="card">
                 <div class="card-header">
@@ -710,6 +716,7 @@ function renderFundingGrids(posData, negData) {
                     ${tooltipHtml}
                 </div>
                 <div class="buttons-row"><button class="btn" onclick="openLinks('${fUrl}')">ВІДКРИТИ ПОЗИЦІЮ</button></div>
+                ${chartBtn}
             </div>`;
     });
     document.getElementById('negative-grid').innerHTML = negHtml;
@@ -720,6 +727,12 @@ function renderFundingGrids(posData, negData) {
         const spotInd = !item.hasSpot ? `<span class="no-spot-dot" title="Немає Спота на ${item.exchange}"></span>` : ``; 
         const { fUrl, sUrl } = getLinks(item.exchange, item.symbol, item.cleanSymbol);
         const clickHandler = item.hasSpot ? `openLinks('${fUrl}', '${sUrl}')` : `openLinks('${fUrl}')`;
+
+        // Знаходимо іншу доступну біржу для порівняння ціни на графіку
+        const counterpartEx = settings.activeExchanges.find(ex => ex !== item.exchange && item.allRatesMap[ex] !== undefined);
+        const chartBtn = counterpartEx 
+            ? `<button class="btn-chart" style="margin-top: 8px; background: #2b3139;" onclick="openChartWindow('${item.cleanSymbol}', '${item.exchange}', '${counterpartEx}')">📊 Спред з ${counterpartEx}</button>`
+            : '';
 
         posHtml += `
             <div class="card">
@@ -733,6 +746,7 @@ function renderFundingGrids(posData, negData) {
                     ${generateTooltipHtml(item.allRatesMap, false)}
                 </div>
                 <div class="buttons-row"><button class="btn" onclick="${clickHandler}">ВІДКРИТИ ПОЗИЦІЮ</button></div>
+                ${chartBtn}
             </div>`;
     });
     document.getElementById('positive-grid').innerHTML = posHtml;
@@ -1105,6 +1119,18 @@ window.processWatchlist = function() {
     });
 
     wlGrid.innerHTML = html;
+};
+
+// === ЛОГІКА ОНОВЛЕНЬ ===
+// Слухаємо сигнал від main.js, що оновлення завантажене
+ipcRenderer.on('update_downloaded', () => {
+    // Показуємо банер
+    document.getElementById('update-banner').style.display = 'flex';
+});
+
+// Функція, яка викликається при кліку на кнопку "Перезапустити та Оновити"
+window.installUpdate = function() {
+    ipcRenderer.send('restart_app');
 };
 
 setInterval(() => {

@@ -1,6 +1,6 @@
 {
   "name": "crypto-arbitrage-scanner",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cross-Exchange Crypto Arbitrage Scanner",
   "main": "main.js",
   "scripts": {
@@ -9,11 +9,11 @@
     "pack": "electron-builder --dir",
     "publish": "electron-builder --win -p always"
   },
-  "author": "Твоє Ім'я",
+  "author": "goncharov6543-source", 
   "license": "ISC",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ТВІЙ_ГІТХАБ_ЛОГІН/ТВІЙ_РЕПОЗИТОРІЙ.git"
+    "url": "https://github.com/goncharov6543-source/CryptoSpreadScanner.git"
   },
   "dependencies": {
     "axios": "^1.6.0",
@@ -26,12 +26,13 @@
   },
   "build": {
     "appId": "com.cryptoarb.app",
-    "productName": "Crypto Arb Pro",
+    "productName": "Crypto Arbitrage Scanner",
     "directories": {
       "output": "dist"
     },
     "win": {
-      "target": ["nsis"]
+      "target": ["nsis"],
+      "icon": "build/icon3.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -40,8 +41,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "ТВІЙ_ГІТХАБ_ЛОГІН",
-        "repo": "ТВІЙ_РЕПОЗИТОРІЙ"
+        "owner": "goncharov6543-source",
+        "repo": "CryptoSpreadScanner"
       }
     ]
   }

@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 
+const { autoUpdater } = require('electron-updater');
+
 let mainWindow;
 let tray = null;
 let minimizeToTray = false;
@@ -10,17 +12,19 @@ function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1400,
         height: 900,
-        title: "Crypto Arb Pro",
+        title: "Crypto Arbitrage Scanner",
+        icon: path.join(__dirname, 'assets', 'icon3.ico'),
         autoHideMenuBar: true, // Ховаємо верхнє меню Файл/Редагувати для краси
         webPreferences: {
             nodeIntegration: true,     // Дозволяємо використовувати Node.js прямо в інтерфейсі
-            contextIsolation: false    // Спрощує роботу
+            contextIsolation: false,   // Спрощує роботу
+            backgroundThrottling: false    
         }
     });
 
     // Завантажуємо наш візуальний інтерфейс
     mainWindow.loadFile('index.html');
-    mainWindow.webContents.openDevTools(); // Закоментуйте для фінального білду
+    // mainWindow.webContents.openDevTools(); // Закоментуйте для фінального білду
 
     // Обробка закриття вікна (Згортання в трей)
     mainWindow.on('close', function (event) {
@@ -39,12 +43,18 @@ function createWindow() {
 app.whenReady().then(() => {
     createWindow();
 
-    // Створюємо базову системну іконку для трею, щоб уникнути помилок відсутності файлу
-    const iconBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAAXNSR0IArs4c6QAAABtJREFUOE9jZKAQMKI1+B81gGE0mEcNIEMAAgBMAA4x2xL2AAAAAElFTkSuQmCC', 'base64');
-    const trayIcon = nativeImage.createFromBuffer(iconBuffer);
+    // 1. Вказуємо шлях до вашої реальної іконки
+    // path.join(__dirname, ...) гарантує, що шлях буде правильним і при розробці, і після збірки
+    const iconPath = path.join(__dirname, 'assets', 'icon3.ico');
+    
+    // 2. Створюємо об'єкт іконки з файлу
+    const trayIcon = nativeImage.createFromPath(iconPath);
 
+    // 3. Ініціалізуємо трей з новою іконкою
     tray = new Tray(trayIcon);
-    tray.setToolTip('Crypto Arb Pro');
+    
+    // Оновлюємо назву в підказці (ToolTip)
+    tray.setToolTip('Crypto Arbitrage Scanner');
     
     // Клік по трею розгортає вікно
     tray.on('click', () => {

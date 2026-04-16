@@ -26,6 +26,10 @@ function createWindow() {
     mainWindow.loadFile('index.html');
     // mainWindow.webContents.openDevTools(); // Закоментуйте для фінального білду
 
+    mainWindow.once('ready-to-show', () => {
+        autoUpdater.checkForUpdatesAndNotify();
+    });
+
     // Обробка закриття вікна (Згортання в трей)
     mainWindow.on('close', function (event) {
         if (minimizeToTray && !isQuitting) {
@@ -85,4 +89,20 @@ ipcMain.on('update-launch-settings', (event, settings) => {
         openAtLogin: settings.autoStart,
         path: app.getPath("exe")
     });
+});
+
+// === ЛОГІКА АВТООНОВЛЕННЯ ===
+
+// Коли програма знайшла і тихо завантажила оновлення з GitHub
+autoUpdater.on('update-downloaded', () => {
+    if (mainWindow) {
+        // Відправляємо сигнал в renderer.js, щоб той показав приховану плашку
+        mainWindow.webContents.send('update_downloaded');
+    }
+});
+
+// Слухаємо команду від кнопки "Перезапустити та Оновити" з інтерфейсу
+ipcMain.on('restart_app', () => {
+    isQuitting = true; // Дозволяємо програмі закритися, а не згорнутися в трей
+    autoUpdater.quitAndInstall(); // Встановлюємо оновлення і перезапускаємось
 });

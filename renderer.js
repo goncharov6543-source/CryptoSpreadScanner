@@ -284,7 +284,7 @@ window.switchTab = function(index) {
     if (index === 3) renderHistoryTab(); 
 };
 
-// ФІКС: Оновлена логіка завантаження при старті
+// Оновлена логіка завантаження при старті
 window.onload = async () => {
     loadSettingsFromLocal();
     loadSoundFiles();
@@ -514,7 +514,7 @@ async function renderPositionsTab() {
     try {
         const posArray = await fetchPositions(settings.apiKeys);
         
-        // ДОДАНО: Логіка лічильника відкритих позицій
+        // Логіка лічильника відкритих позицій
         const badge = document.getElementById('pos-count-badge');
         if (badge) {
             if (posArray.length > 0) {
@@ -657,11 +657,11 @@ async function renderPositionsTab() {
     }
 }
 
-// ДОДАНО: Функція для розгортання історії
+// Функція для розгортання історії
 window.toggleHistoryDetails = function(id) {
     const el = document.getElementById(id);
     if(el) {
-        el.style.display = (el.style.display === 'block') ? 'none' : 'block';
+        el.classList.toggle('open');
     }
 };
 
@@ -696,7 +696,7 @@ function renderHistoryTab() {
             if (p2.cleanSymbol === p1.cleanSymbol && Math.abs(p2.closeDate - p1.closeDate) < 120000) {
                 group.legs.push(p2);
                 group.finalPnl += p2.finalPnl;
-                group.sizeUSDT = Math.max(group.sizeUSDT, p2.sizeUSDT || 0); // Беремо максимальний розмір з двох ніг
+                group.sizeUSDT += (p2.sizeUSDT || 0); // ФІКС: Сумуємо розмір позицій
                 skipIndices.add(j);
             }
         }
@@ -735,7 +735,7 @@ function renderHistoryTab() {
                 </div>
                 
                 <div class="pos-col center">
-                    <div class="pos-label">Розмір</div>
+                    <div class="pos-label">Сумарний Розмір</div>
                     <div class="pos-value">${formatCurrency(group.sizeUSDT)}</div>
                 </div>
 
@@ -751,7 +751,7 @@ function renderHistoryTab() {
 
                 <div class="pos-col right">
                     <div class="pos-label">Загальний PNL</div>
-                    <div class="pos-total-pnl ${pnlClass}" style="display:inline-block; margin-top:5px;">
+                    <div class="pos-total-pnl ${pnlClass}" style="display:inline-block;">
                         ${sign}$${group.finalPnl.toFixed(2)}
                     </div>
                 </div>
@@ -866,10 +866,10 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
     
-    // ФІКС ЗНАКІВ ФАНДІНГУ: тепер показуємо чисті значення
+    // ФІКС ЗНАКІВ ФАНДІНГУ: позитивний = зелений, негативний = червоний
     const bR = buyData.rate * 100; 
     const bRStr = (bR > 0 ? '+' : '') + bR.toFixed(4) + '%'; 
-    const bRCol = bR > 0 ? '#e74c3c' : '#00d67c';
+    const bRCol = bR > 0 ? '#00d67c' : '#e74c3c'; 
 
     const sR = sellData.rate * 100; 
     const sRStr = (sR > 0 ? '+' : '') + sR.toFixed(4) + '%'; 
@@ -957,6 +957,11 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
 const chartPort = 3001;
 const chartServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${chartPort}`);
+    // ФІКС: Ігноруємо запити на favicon, щоб не було 404 помилок
+    if (url.pathname === '/favicon.ico') {
+        res.writeHead(204); 
+        return res.end();
+    }
     if (url.pathname === '/chart') {
         const symbol = url.searchParams.get('symbol');
         const ex1 = url.searchParams.get('ex1'); 
@@ -975,10 +980,19 @@ async function getKlineData(ex, sym) {
     try {
         if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
         if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-        if(ex==='MEXC') return (await axios.get(`https://api.mexc.com/api/v3/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+        // ФІКС: Тепер MEXC використовує API для Ф'ючерсів (Contract API), а не Spot
+        if(ex==='MEXC') { 
+            const r = await axios.get(`https://contract.mexc.com/api/v1/contract/kline/${sym.replace('USDT','_USDT')}?interval=Min1`);
+            const d = r.data.data;
+            let arr = [];
+            for(let i=0; i<d.time.length; i++) {
+                arr.push({ time: d.time[i] * 1000, close: parseFloat(d.close[i]) });
+            }
+            return arr.slice(-720);
+        }
         if(ex==='Gate.io') return (await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${sym.replace('USDT','_USDT')}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k.t)*1000,close:parseFloat(k.c)}));
         if(ex==='Bitget') return (await axios.get(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=1m&limit=720`)).data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-    } catch(e) {} return [];
+    } catch(e) { console.log(`Kline error ${ex}:`, e.message); } return [];
 }
 
 async function getFundingHistory(ex, sym) {
@@ -1000,7 +1014,7 @@ async function generateChartPage(symbol, ex1, ex2, res) {
 
         if (data1.length === 0 || data2.length === 0) {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(`<h2 style="color:white; font-family:sans-serif; text-align:center;">❌ Немає достатньо даних для графіка ${symbol}</h2>`);
+            res.end(`<h2 style="color:white; font-family:sans-serif; text-align:center;">❌ Немає достатньо даних для графіка ${symbol} (Перевірте чи монета доступна на обох біржах)</h2>`);
             return;
         }
 
@@ -1136,7 +1150,6 @@ window.toggleWatchlist = function(cleanSymbol, buyEx, sellEx) {
         delete patternStats[cleanSymbol]; 
         window.showToast('Watch List', `Монету ${cleanSymbol} видалено.`);
     } else {
-        // ФІКС: додаємо isMuted за замовчуванням
         settings.watchlist.push({ cleanSymbol, buyEx, sellEx, isMuted: false });
         window.showToast('Watch List', `Додано ${cleanSymbol}. Аналізую історію...`);
         calculateCoinPattern(cleanSymbol, buyEx, sellEx); 
@@ -1184,7 +1197,6 @@ window.processWatchlist = function() {
 
                 if (spread >= anomalyThreshold) {
                     const now = Date.now();
-                    // ФІКС: Перевірка !item.isMuted перед звуком
                     if (!item.isMuted && (!lastAnomalyAlerts[item.cleanSymbol] || (now - lastAnomalyAlerts[item.cleanSymbol] > 5 * 60 * 1000))) {
                         playAlert();
                         window.showToast(

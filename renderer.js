@@ -171,11 +171,14 @@ async function updateBalancesUI() {
         btn.className = 'api-status-btn green';
     }
 
-    const lastRecord = settings.balanceHistory.length > 0 ? settings.balanceHistory[settings.balanceHistory.length - 1].total : null;
-    if (lastRecord === null || Math.abs(lastRecord - result.total) > 0.01) {
-        settings.balanceHistory.push({ time: Date.now(), total: result.total });
-        if (settings.balanceHistory.length > 1000) settings.balanceHistory.shift(); 
-        saveSettingsToLocal();
+    // ФІКС: Зберігаємо дані для графіка тільки тоді, коли немає активних позицій!
+    if (Object.keys(lastKnownPositions).length === 0) {
+        const lastRecord = settings.balanceHistory.length > 0 ? settings.balanceHistory[settings.balanceHistory.length - 1].total : null;
+        if (lastRecord === null || Math.abs(lastRecord - result.total) > 0.01) {
+            settings.balanceHistory.push({ time: Date.now(), total: result.total });
+            if (settings.balanceHistory.length > 1000) settings.balanceHistory.shift(); 
+            saveSettingsToLocal();
+        }
     }
 }
 
@@ -248,7 +251,14 @@ window.renderBalanceChart = function(hours) {
     balChartInstance = new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: { labels, datasets: [{ label: 'Сумарний Баланс ($)', data: dataPts, borderColor: '#f0b90b', backgroundColor: 'rgba(240, 185, 11, 0.1)', borderWidth: 3, fill: true, tension: 0.1, pointRadius: 2, pointHoverRadius: 6 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { tooltip: { callbacks: { label: c => '$' + c.raw.toFixed(2) } } }, scales: { y: { grid: { color: '#2b3139' } }, x: { grid: { color: '#2b3139' } } } }
+        // ФІКС: mode: 'index', intersect: false дозволяє бачити точки наводячи мишкою будь-де на стовпчик
+        options: { 
+            responsive: true, 
+            maintainAspectRatio: false, 
+            interaction: { mode: 'index', intersect: false }, 
+            plugins: { tooltip: { callbacks: { label: c => '$' + c.raw.toFixed(2) } } }, 
+            scales: { y: { grid: { color: '#2b3139' } }, x: { grid: { color: '#2b3139' } } } 
+        }
     });
 };
 
@@ -503,7 +513,11 @@ async function fetchMarketData() {
 async function renderPositionsTab() {
     const loader = document.getElementById('pos-loader');
     const container = document.getElementById('pos-content');
-    loader.style.display = 'block'; container.innerHTML = '';
+
+    // ФІКС: Тільки якщо контейнер порожній, показуємо лоадер (щоб уникнути блимання)
+    if (!container.innerHTML.trim()) {
+        loader.style.display = 'block';
+    }
 
     if(Object.keys(settings.apiKeys).length === 0) {
         loader.style.display = 'none';
@@ -514,7 +528,6 @@ async function renderPositionsTab() {
     try {
         const posArray = await fetchPositions(settings.apiKeys);
         
-        // Логіка лічильника відкритих позицій
         const badge = document.getElementById('pos-count-badge');
         if (badge) {
             if (posArray.length > 0) {
@@ -582,6 +595,7 @@ async function renderPositionsTab() {
             let totalUnrealized = 0;
             let totalRealized = 0;
             let totalSize = 0;
+            let totalTokens = 0; // ДОДАНО
             let exSides = [];
             let prices = [];
 
@@ -589,6 +603,7 @@ async function renderPositionsTab() {
                 totalUnrealized += p.unRealized || 0;
                 totalRealized += p.realized || 0;
                 totalSize += p.sizeUSDT || 0;
+                totalTokens += p.sizeTokens || 0; // ДОДАНО
                 
                 const col = p.side === 'Long' ? 'color:#00d67c;' : 'color:#e74c3c;';
                 exSides.push(`<span style="font-weight:bold;">${p.exchange}</span> (<span style="${col}">${p.side} ${p.leverage}x</span>)`);
@@ -606,50 +621,49 @@ async function renderPositionsTab() {
             const pnlClass = estProfit >= 0 ? 'pnl-green' : 'pnl-red';
             const sign = estProfit > 0 ? '+' : '';
 
-            // Оновлено HTML позицій під нову сітку (grid)
+            // ФІКС: Новий єдиний рядок з вертикальними розділювачами (клас history-summary)
             html += `
-            <div class="pos-card">
-                <div class="pos-col">
-                    <div class="pos-label">Монета</div>
-                    <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
-                    <div class="pos-subval" style="margin-top:4px;">${exSides.join(' / ')}</div>
-                </div>
-                
-                <div class="pos-col center">
-                    <div class="pos-label">Розмір (USDT)</div>
-                    <div class="pos-value">${formatCurrency(totalSize)}</div>
-                </div>
+            <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
+                <div class="history-summary">
+                    <div class="pos-col">
+                        <div class="pos-label">Монета</div>
+                        <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
+                        <div class="pos-subval" style="margin-top:4px;">${exSides.join(' / ')}</div>
+                    </div>
+                    
+                    <div class="pos-col center">
+                        <div class="pos-label">Розмір</div>
+                        <div class="pos-value">${formatCurrency(totalSize)}</div>
+                        <div class="pos-subval" style="color:#f0b90b;">${totalTokens.toFixed(2)} шт.</div>
+                    </div>
 
-                <div class="pos-col center">
-                    <div class="pos-label">Вхідна ціна</div>
-                    <div class="pos-value">${prices.join(' <span style="color:#848e9c;">/</span> ')}</div>
-                </div>
+                    <div class="pos-col center">
+                        <div class="pos-label">Вхідна ціна</div>
+                        <div class="pos-value">${prices.join(' <span style="color:#848e9c;">/</span> ')}</div>
+                    </div>
 
-                <div class="pos-col center">
-                    <div class="pos-label">Спред Входу</div>
-                    <div class="pos-value" style="color: #3498db;">${spreadStr}</div>
-                </div>
-
-                <div class="pos-col right">
-                    <div style="display:flex; justify-content: flex-end; gap: 15px; margin-bottom: 5px;">
-                        <div class="pos-col right">
-                            <div class="pos-label">Реалізований</div>
-                            <div class="pos-subval ${totalRealized >= 0 ? 'pnl-green' : 'pnl-red'}">$${totalRealized.toFixed(2)}</div>
-                        </div>
-                        <div class="pos-col right">
-                            <div class="pos-label">Нереалізований</div>
-                            <div class="pos-subval ${totalUnrealized >= 0 ? 'pnl-green' : 'pnl-red'}">$${totalUnrealized.toFixed(2)}</div>
+                    <div class="pos-col center">
+                        <div class="pos-label">Спред входу</div>
+                        <div class="pos-value" style="color: #3498db; font-size: 1.2em;">${spreadStr}</div>
+                        <div class="pos-subval" style="margin-top:4px; font-size:0.75em;">
+                            <span class="${totalRealized >= 0 ? 'pnl-green' : 'pnl-red'}">${totalRealized >= 0 ? '+' : ''}$${totalRealized.toFixed(2)}</span>
+                            <span style="color:#848e9c; margin: 0 4px;">/</span>
+                            <span class="${totalUnrealized >= 0 ? 'pnl-green' : 'pnl-red'}">${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toFixed(2)}</span>
                         </div>
                     </div>
-                    <div class="pos-total-pnl ${pnlClass}">
-                        ${sign}$${estProfit.toFixed(2)}
+
+                    <div class="pos-col right">
+                        <div class="pos-label">Загальний PNL</div>
+                        <div class="pos-total-pnl ${pnlClass}" style="display:inline-block;">
+                            ${sign}$${estProfit.toFixed(2)}
+                        </div>
                     </div>
                 </div>
             </div>`;
         });
 
-        loader.style.display = 'none';
         container.innerHTML = html;
+        loader.style.display = 'none'; // Ховаємо тільки після рендеру
 
     } catch (e) {
         loader.style.display = 'none';
@@ -674,7 +688,6 @@ function renderHistoryTab() {
         return;
     }
 
-    // Логіка групування: об'єднуємо угоди по одній монеті, які були закриті протягом 2 хвилин
     let groupedHistory = [];
     let skipIndices = new Set();
 
@@ -692,11 +705,10 @@ function renderHistoryTab() {
         for (let j = i + 1; j < settings.positionHistory.length; j++) {
             if (skipIndices.has(j)) continue;
             let p2 = settings.positionHistory[j];
-            // Якщо та сама монета і різниця у часі закриття менше 2 хвилин (120000 мс)
             if (p2.cleanSymbol === p1.cleanSymbol && Math.abs(p2.closeDate - p1.closeDate) < 120000) {
                 group.legs.push(p2);
                 group.finalPnl += p2.finalPnl;
-                group.sizeUSDT += (p2.sizeUSDT || 0); // ФІКС: Сумуємо розмір позицій
+                group.sizeUSDT += (p2.sizeUSDT || 0); 
                 skipIndices.add(j);
             }
         }
@@ -708,10 +720,8 @@ function renderHistoryTab() {
         const pnlClass = group.finalPnl >= 0 ? 'pnl-green' : 'pnl-red';
         const sign = group.finalPnl > 0 ? '+' : '';
         
-        // Збираємо назви бірж для головного рядка
         const exchanges = group.legs.map(leg => leg.exchange).join(' / ');
 
-        // Генеруємо HTML для деталей (кожної ноги окремо)
         let legsHtml = '';
         group.legs.forEach(leg => {
             const legPnlClass = leg.finalPnl >= 0 ? 'pnl-green' : 'pnl-red';
@@ -957,7 +967,6 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
 const chartPort = 3001;
 const chartServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${chartPort}`);
-    // ФІКС: Ігноруємо запити на favicon, щоб не було 404 помилок
     if (url.pathname === '/favicon.ico') {
         res.writeHead(204); 
         return res.end();
@@ -980,7 +989,6 @@ async function getKlineData(ex, sym) {
     try {
         if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
         if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-        // ФІКС: Тепер MEXC використовує API для Ф'ючерсів (Contract API), а не Spot
         if(ex==='MEXC') { 
             const r = await axios.get(`https://contract.mexc.com/api/v1/contract/kline/${sym.replace('USDT','_USDT')}?interval=Min1`);
             const d = r.data.data;

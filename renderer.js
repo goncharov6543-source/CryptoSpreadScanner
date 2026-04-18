@@ -15,6 +15,7 @@ let patternStats = {};
 let alertedCoins = new Set();
 let lastKnownPositions = {}; 
 let lastAnomalyAlerts = {};  
+let currentSidebarTab = 'WL'; // ФІКС: Змінна для відстеження вкладок WL / BL
 
 // --- НАЛАШТУВАННЯ ТА ЗБЕРЕЖЕННЯ (Persistence) ---
 let settings = {
@@ -25,6 +26,8 @@ let settings = {
     soundFile: '',
     soundVolume: 50,
     watchlist: [], 
+    blacklist: [], // ФІКС: Блекліст
+    pairFilter: 'ALL', // ФІКС: Збереження вибору типу пари
     apiKeys: {},
     balanceHistory: [],
     minimizeToTray: false,
@@ -52,6 +55,10 @@ function loadSettingsFromLocal() {
     document.getElementById('sound-volume').value = settings.soundVolume;
     document.getElementById('vol-val').innerText = settings.soundVolume + '%';
     
+    if (document.getElementById('pair-type-filter')) {
+        document.getElementById('pair-type-filter').value = settings.pairFilter || 'ALL';
+    }
+
     document.getElementById('setting-tray').checked = settings.minimizeToTray || false;
     document.getElementById('setting-autostart').checked = settings.autoStart || false;
     
@@ -305,7 +312,7 @@ window.onload = async () => {
         }
     }
 
-    processWatchlist(); 
+    processSidebar(); 
 };
 
 window.toggleSidebar = function() {
@@ -344,6 +351,7 @@ window.saveFiltersAndUpdate = function() {
     settings.minVol = parseInt(document.getElementById('min-vol').value) || 0;
     settings.maxVol = parseInt(document.getElementById('max-vol').value) || 999999;
     settings.alertSpread = parseFloat(document.getElementById('alert-spread').value) || 999;
+    settings.pairFilter = document.getElementById('pair-type-filter').value || 'ALL'; // ФІКС: Збереження фільтру
     saveSettingsToLocal();
     window.forceUpdate();
 };
@@ -398,6 +406,9 @@ async function fetchMarketData() {
         const minLim = settings.minVol * 1000;
         const maxLim = settings.maxVol * 1000;
         const alertSpreadLimit = settings.alertSpread;
+        
+        const pairFilterSelect = document.getElementById('pair-type-filter');
+        const pairFilter = pairFilterSelect ? pairFilterSelect.value : 'ALL';
         
         let crossData = {};
         const globalRatesMap = {}; 
@@ -454,6 +465,8 @@ async function fetchMarketData() {
         await Promise.all([...spotPromises, ...futuresPromises]);
         globalCrossData = crossData;
 
+        if(!settings.blacklist) settings.blacklist = []; // Ініціалізація блекліста
+
         let positiveFunding = [], negativeFunding = [], priceArbOpps = [];
 
         Object.keys(crossData).forEach(cleanSymbol => {
@@ -482,6 +495,8 @@ async function fetchMarketData() {
                         const ex1 = exMap[ex1N], ex2 = exMap[ex2N];
 
                         if (ex1.vol < minLim || ex1.vol > maxLim || ex2.vol < minLim || ex2.vol > maxLim) continue;
+                        
+                        // ФІКС 2: Не можна шортити спот (ex2 має бути ф'ючерс), і не порівнюємо Спот зі Спотом
                         if (ex2.isSpot) continue; 
                         if (ex1.isSpot && ex2.isSpot) continue;
 
@@ -490,8 +505,16 @@ async function fetchMarketData() {
 
                         const spread = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
                         
-                        // ФІКС 2: Збільшили максимальний спред до 999%, щоб не фільтрувало 30% спреди
-                        if (spread >= 0.15 && spread <= 999) {
+                        // ФІКС 2: Максимум 50% спреду
+                        if (spread >= 0.15 && spread <= 50) {
+                            
+                            // ФІКС 3: Пропускаємо заблоковані монети (Black List)
+                            if (settings.blacklist.includes(cleanSymbol)) continue;
+
+                            // ФІКС 1: Фільтр типу пари
+                            if (pairFilter === 'FUT' && typeTag !== 'FUT ↔ FUT') continue;
+                            if (pairFilter === 'SPOT' && typeTag !== 'SPOT 🟢 ↔ FUT 🔴') continue;
+
                             priceArbOpps.push({
                                 cleanSymbol, spreadPct: spread, typeTag: typeTag,
                                 buyEx: ex1N, buySymbol: ex1.symbol, buyPrice: ex1.ask, buyRate: ex1.rate, buyVol: ex1.vol,
@@ -499,7 +522,7 @@ async function fetchMarketData() {
                             });
 
                             if (document.getElementById('tab-2').classList.contains('active') && spread >= alertSpreadLimit) {
-                                // ФІКС 1: Перевіряємо чи монета в муті для основного списку
+                                // Перевірка чи монета в муті (через WL)
                                 const inWl = settings.watchlist.find(wl => wl.cleanSymbol === cleanSymbol);
                                 const isMuted = inWl ? inWl.isMuted : false;
                                 
@@ -530,7 +553,7 @@ async function fetchMarketData() {
 
         renderFundingGrids(positiveFunding.slice(0, 10), negativeFunding.slice(0, 10));
         renderArbitrageGrid(finalArb.slice(0, 20));
-        if (typeof processWatchlist === 'function') processWatchlist(); 
+        if (typeof processSidebar === 'function') processSidebar(); 
         
         if(Object.keys(settings.apiKeys).length > 0) {
             updateBalancesUI();
@@ -883,25 +906,74 @@ function renderArbitrageGrid(arbData) {
             item.cleanSymbol, item.spreadPct, 
             item.buyEx, { symbol: item.buySymbol, ask: item.buyPrice, rate: item.buyRate, vol: item.buyVol }, 
             item.sellEx, { symbol: item.sellSymbol, bid: item.sellPrice, rate: item.sellRate, vol: item.sellVol },
-            false,
-            item.typeTag 
+            'MAIN', item.typeTag // ФІКС 3: Передаємо контекст
         );
     });
     grid.innerHTML = html;
 }
 
+// Функції роботи зі звуком і блеклістом
 window.toggleMute = function(cleanSymbol) {
     const item = settings.watchlist.find(i => i.cleanSymbol === cleanSymbol);
     if (item) {
         item.isMuted = !item.isMuted;
         saveSettingsToLocal();
-        processWatchlist(); 
+        processSidebar(); 
         const status = item.isMuted ? 'вимкнено' : 'увімкнено';
         window.showToast('Сповіщення', `Звук для ${cleanSymbol} ${status}.`);
     }
 };
 
-function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, isWatchlist, passedTypeTag = null) {
+window.toggleBlacklist = function(cleanSymbol) {
+    if (!settings.blacklist) settings.blacklist = [];
+    const idx = settings.blacklist.indexOf(cleanSymbol);
+    
+    if (idx > -1) {
+        settings.blacklist.splice(idx, 1);
+        window.showToast('Black List', `Монету ${cleanSymbol} видалено з блекліста.`);
+    } else {
+        settings.blacklist.push(cleanSymbol);
+        const wlIdx = settings.watchlist.findIndex(i => i.cleanSymbol === cleanSymbol);
+        if (wlIdx > -1) {
+            settings.watchlist.splice(wlIdx, 1);
+            delete patternStats[cleanSymbol];
+        }
+        window.showToast('Black List', `Монету ${cleanSymbol} додано у блекліст.`);
+    }
+    saveSettingsToLocal();
+    processSidebar();
+    fetchMarketData(); 
+};
+
+window.toggleWatchlist = function(cleanSymbol, buyEx, sellEx) {
+    const index = settings.watchlist.findIndex(i => i.cleanSymbol === cleanSymbol);
+    let added = false;
+    
+    if (index > -1) {
+        settings.watchlist.splice(index, 1);
+        delete patternStats[cleanSymbol]; 
+        window.showToast('Watch List', `Монету ${cleanSymbol} видалено.`);
+    } else {
+        settings.watchlist.push({ cleanSymbol, buyEx, sellEx, isMuted: false });
+        window.showToast('Watch List', `Додано ${cleanSymbol}. Аналізую історію...`);
+        calculateCoinPattern(cleanSymbol, buyEx, sellEx); 
+        added = true;
+    }
+
+    if (added) {
+        if (!settings.blacklist) settings.blacklist = [];
+        const blIdx = settings.blacklist.indexOf(cleanSymbol);
+        if (blIdx > -1) settings.blacklist.splice(blIdx, 1);
+    }
+    
+    saveSettingsToLocal();
+    processSidebar(); 
+    fetchMarketData();
+};
+
+
+// ФІКС 3: Оновлена генерація карток під різні контексти (MAIN, WL, BL)
+function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, listContext, passedTypeTag = null) {
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
     
@@ -922,14 +994,14 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
 
     const inWl = settings.watchlist.find(i => i.cleanSymbol === cleanSymbol);
     const isMuted = inWl ? inWl.isMuted : false;
+    const inBl = settings.blacklist && settings.blacklist.includes(cleanSymbol);
 
-    let iconSvg = '';
-    if(isWatchlist) {
-        iconSvg = `<svg class="icon-action icon-remove" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}')"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>`;
-    } else {
-        const eyeColor = inWl ? '#f0b90b' : '#848e9c';
-        iconSvg = `<svg class="icon-action eye-icon-${cleanSymbol}" style="fill:${eyeColor};" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}','${buyEx}','${sellEx}')"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`;
-    }
+    // Іконки
+    const eyeColor = inWl ? '#f0b90b' : '#848e9c';
+    const eyeIcon = `<svg class="icon-action eye-icon-${cleanSymbol}" style="fill:${eyeColor};" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}','${buyEx}','${sellEx}')" title="Додати/Видалити з Watch List"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`;
+
+    const trashColor = inBl ? '#e74c3c' : '#848e9c';
+    const trashIcon = `<svg class="icon-action" style="fill:${trashColor}; margin-left:8px;" viewBox="0 0 24 24" onclick="toggleBlacklist('${cleanSymbol}')" title="Додати/Видалити з Black List"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
 
     const bellIcon = `
         <svg class="icon-action" style="fill: ${isMuted ? '#e74c3c' : '#f0b90b'}; margin-left: 8px;" 
@@ -939,8 +1011,20 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                 : '<path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.89 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/>'}
         </svg>`;
 
+    let topIcons = '';
+    let rightIcons = '';
+
+    if (listContext === 'MAIN') {
+        topIcons = eyeIcon + trashIcon;
+    } else if (listContext === 'WL') {
+        topIcons = eyeIcon;
+        rightIcons = bellIcon;
+    } else if (listContext === 'BL') {
+        topIcons = trashIcon;
+    }
+
     let avgSpreadHtml = '';
-    if (isWatchlist) {
+    if (listContext === 'WL') {
         if (patternStats[cleanSymbol] && patternStats[cleanSymbol].isReady) {
             avgSpreadHtml = `<div style="font-size: 0.85em; color: #f0b90b; margin-top: 6px; font-weight: bold; border-top: 1px dashed rgba(240, 185, 11, 0.3); padding-top: 4px;" title="Середній спред за 12 годин">~ ${patternStats[cleanSymbol].avg.toFixed(2)}%</div>`;
         } else {
@@ -953,9 +1037,9 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
             <div class="arb-top">
                 <div class="arb-symbol-col">
                     <div class="arb-symbol-row">
-                        ${iconSvg}
+                        ${topIcons}
                         <span class="symbol" title="${cleanSymbol}">${cleanSymbol}</span>
-                        ${isWatchlist ? bellIcon : ''}
+                        ${rightIcons}
                     </div>
                     <span class="vol-badge" style="width: max-content; display: inline-block; margin-bottom: 4px;">Vol: ${formatCurrency(maxVol)}</span>
                     <div style="background:#2b3139; color:#f0b90b; font-size:0.7em; padding:2px 8px; border-radius:4px; white-space:nowrap; border: 1px solid #f0b90b; font-weight:bold; width: max-content;">${typeTag}</div>
@@ -995,7 +1079,136 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     `;
 }
 
-// --- ЛОГІКА ГРАФІКІВ У НОВІЙ ВКЛАДЦІ CHROME (З ПРОГРЕС-БАРОМ) ---
+function generateEmptyCard(cleanSymbol, context) {
+    const btnText = context === 'WL' ? 'Видалити з Watch List' : 'Видалити з Black List';
+    const fnCall = context === 'WL' ? `toggleWatchlist('${cleanSymbol}')` : `toggleBlacklist('${cleanSymbol}')`;
+    return `
+    <div class="arb-card" style="opacity: 0.6; text-align:center; padding: 20px;">
+        <div style="font-weight:bold; margin-bottom:10px;">${cleanSymbol}</div>
+        <div style="font-size:0.85em; color:#848e9c;">Немає актуальних даних для розрахунку.</div>
+        <button class="btn-submit" style="background:#e74c3c; color:#fff; width:auto; padding:5px 15px; margin-top:10px;" onclick="${fnCall}">${btnText}</button>
+    </div>`;
+}
+
+// --- ЛОГІКА САЙДБАРУ (WL + BL) ---
+window.switchSidebarTab = function(tab) {
+    currentSidebarTab = tab;
+    document.getElementById('tab-title-wl').style.color = tab === 'WL' ? '#f0b90b' : '#848e9c';
+    document.getElementById('tab-title-bl').style.color = tab === 'BL' ? '#e74c3c' : '#848e9c';
+    processSidebar();
+};
+
+window.processSidebar = function() {
+    const grid = document.getElementById('sidebar-grid');
+    const wlCount = document.getElementById('wl-count');
+    const blCount = document.getElementById('bl-count');
+
+    if (!settings.watchlist) settings.watchlist = [];
+    if (!settings.blacklist) settings.blacklist = [];
+
+    wlCount.innerText = settings.watchlist.length;
+    blCount.innerText = settings.blacklist.length;
+
+    if (!isDataLoaded || !globalCrossData) {
+        grid.innerHTML = `<div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">⏳ Очікування даних ринку...</div>`;
+        return;
+    }
+
+    let html = '';
+
+    if (currentSidebarTab === 'WL') {
+        if (settings.watchlist.length === 0) {
+            grid.innerHTML = `<div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">Натисніть на 👁️ біля монети, щоб додати її сюди.</div>`;
+            return;
+        }
+
+        settings.watchlist.forEach(item => {
+            const symData = globalCrossData[item.cleanSymbol];
+            if (symData && symData[item.buyEx] && symData[item.sellEx]) {
+                const bData = symData[item.buyEx];
+                const sData = symData[item.sellEx];
+                const spread = ((sData.bid - bData.ask) / bData.ask) * 100;
+
+                if (patternStats[item.cleanSymbol] && patternStats[item.cleanSymbol].isReady) {
+                    const pattern = patternStats[item.cleanSymbol];
+                    const anomalyThreshold = Math.max(pattern.avg + 1.5, pattern.max + 0.5, 1.0);
+
+                    if (spread >= anomalyThreshold) {
+                        const now = Date.now();
+                        if (!item.isMuted && (!lastAnomalyAlerts[item.cleanSymbol] || (now - lastAnomalyAlerts[item.cleanSymbol] > 5 * 60 * 1000))) {
+                            playAlert();
+                            window.showToast(
+                                `🚨 ПРОБІЙ ПАТЕРНУ: ${item.cleanSymbol}`,
+                                `Поточний спред: <b style="color:#00d67c">${spread.toFixed(2)}%</b>`
+                            );
+                            lastAnomalyAlerts[item.cleanSymbol] = now;
+                        }
+                    }
+                }
+
+                let typeTag = 'FUT ↔ FUT';
+                if (item.buyEx.endsWith(' Spot') && !item.sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
+
+                html += generateArbCardHtml(
+                    item.cleanSymbol, spread,
+                    item.buyEx, { symbol: bData.symbol, ask: bData.ask, rate: bData.rate, vol: bData.vol },
+                    item.sellEx, { symbol: sData.symbol, bid: sData.bid, rate: sData.rate, vol: sData.vol },
+                    'WL', typeTag 
+                );
+            } else {
+                html += generateEmptyCard(item.cleanSymbol, 'WL');
+            }
+        });
+    } else if (currentSidebarTab === 'BL') {
+        if (settings.blacklist.length === 0) {
+            grid.innerHTML = `<div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">Натисніть на 🗑️ біля монети, щоб заблокувати її.</div>`;
+            return;
+        }
+
+        settings.blacklist.forEach(symbol => {
+            const exMap = globalCrossData[symbol];
+            if (exMap) {
+                let bestSpread = -1;
+                let bestBuy, bestSell;
+                let bestType = '';
+                
+                const exs = Object.keys(exMap);
+                for(let i=0; i<exs.length; i++) {
+                    for(let j=0; j<exs.length; j++) {
+                        if(i===j) continue;
+                        const ex1 = exMap[exs[i]]; const ex2 = exMap[exs[j]];
+                        if (ex2.isSpot) continue; 
+                        if (ex1.isSpot && ex2.isSpot) continue;
+                        const sp = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
+                        if (sp > bestSpread) {
+                            bestSpread = sp; bestBuy = ex1; bestSell = ex2;
+                            bestType = (ex1.isSpot && !ex2.isSpot) ? 'SPOT 🟢 ↔ FUT 🔴' : 'FUT ↔ FUT';
+                        }
+                    }
+                }
+                
+                if (bestBuy && bestSell) {
+                    html += generateArbCardHtml(
+                        symbol, bestSpread,
+                        bestBuy.exchange, { symbol: bestBuy.symbol, ask: bestBuy.ask, rate: bestBuy.rate, vol: bestBuy.vol },
+                        bestSell.exchange, { symbol: bestSell.symbol, bid: bestSell.bid, rate: bestSell.rate, vol: bestSell.vol },
+                        'BL', bestType 
+                    );
+                } else {
+                    html += generateEmptyCard(symbol, 'BL');
+                }
+            } else {
+                html += generateEmptyCard(symbol, 'BL');
+            }
+        });
+    }
+
+    grid.innerHTML = html;
+};
+
+window.processWatchlist = window.processSidebar; // Для зворотної сумісності
+
+// --- ЛОГІКА ГРАФІКІВ У НОВІЙ ВКЛАДЦІ CHROME ---
 const chartPort = 3001;
 const chartServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${chartPort}`);
@@ -1007,7 +1220,7 @@ const chartServer = http.createServer((req, res) => {
         const symbol = url.searchParams.get('symbol');
         const ex1 = url.searchParams.get('ex1'); 
         const ex2 = url.searchParams.get('ex2'); 
-        const days = parseFloat(url.searchParams.get('days')) || 0.5; // За замовчуванням 12 годин
+        const days = parseFloat(url.searchParams.get('days')) || 0.5;
         return generateChartPageHTML(symbol, ex1, ex2, days, res);
     }
     if (url.pathname === '/stream-chart') {
@@ -1021,7 +1234,6 @@ window.openChartWindow = function(symbol, ex1, ex2) {
     shell.openExternal(`http://localhost:${chartPort}/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=0.5`);
 };
 
-// ФІКС 4: Розумний парсинг свічок чанками з рандомними паузами
 async function getKlineDataChunked(exName, sym, totalCandles, onProgress) {
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
@@ -1083,7 +1295,6 @@ async function getKlineDataChunked(exName, sym, totalCandles, onProgress) {
             if (chunk.length < limit * 0.5) break; 
             if (allData.length >= totalCandles) break;
             
-            // Рандомна пауза щоб не зловити рейт-ліміт (400-1000 мс)
             await new Promise(res => setTimeout(res, 400 + Math.random() * 600));
             
         } catch(e) {
@@ -1291,106 +1502,13 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
         patternStats[symbol] = { avg, max, isReady: true };
         
         if (document.getElementById('tab-2').classList.contains('active')) {
-            window.processWatchlist();
+            window.processSidebar();
         }
         
     } catch(e) {
         console.log(`Помилка розрахунку патерну для ${symbol}`, e.message);
     }
 }
-
-// --- ЛОГІКА WATCH LIST ---
-
-window.toggleWatchlist = function(cleanSymbol, buyEx, sellEx) {
-    const index = settings.watchlist.findIndex(i => i.cleanSymbol === cleanSymbol);
-    let added = false;
-    
-    if (index > -1) {
-        settings.watchlist.splice(index, 1);
-        delete patternStats[cleanSymbol]; 
-        window.showToast('Watch List', `Монету ${cleanSymbol} видалено.`);
-    } else {
-        settings.watchlist.push({ cleanSymbol, buyEx, sellEx, isMuted: false });
-        window.showToast('Watch List', `Додано ${cleanSymbol}. Аналізую історію...`);
-        calculateCoinPattern(cleanSymbol, buyEx, sellEx); 
-        added = true;
-    }
-    
-    saveSettingsToLocal();
-    processWatchlist(); 
-    
-    const eyeIcons = document.querySelectorAll(`.eye-icon-${cleanSymbol}`);
-    eyeIcons.forEach(icon => {
-        icon.style.fill = added ? '#f0b90b' : '#848e9c';
-    });
-};
-
-window.processWatchlist = function() {
-    const wlGrid = document.getElementById('watchlist-grid');
-    const wlCount = document.getElementById('wl-count');
-
-    if (!settings.watchlist || settings.watchlist.length === 0) {
-        wlCount.innerText = '0';
-        wlGrid.innerHTML = `<div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">Натисніть на 👁️ біля монети, щоб додати її сюди.</div>`;
-        return;
-    }
-
-    wlCount.innerText = settings.watchlist.length;
-    let html = '';
-
-    if (!isDataLoaded || !globalCrossData) {
-        wlGrid.innerHTML = `<div style="text-align: center; color: #848e9c; font-size: 0.9em; padding: 20px 0;">⏳ Очікування даних ринку...</div>`;
-        return;
-    }
-
-    settings.watchlist.forEach(item => {
-        const symData = globalCrossData[item.cleanSymbol];
-        
-        if (symData && symData[item.buyEx] && symData[item.sellEx]) {
-            const bData = symData[item.buyEx];
-            const sData = symData[item.sellEx];
-            const spread = ((sData.bid - bData.ask) / bData.ask) * 100;
-
-            if (patternStats[item.cleanSymbol] && patternStats[item.cleanSymbol].isReady) {
-                const pattern = patternStats[item.cleanSymbol];
-                const anomalyThreshold = Math.max(pattern.avg + 1.5, pattern.max + 0.5, 1.0);
-
-                if (spread >= anomalyThreshold) {
-                    const now = Date.now();
-                    if (!item.isMuted && (!lastAnomalyAlerts[item.cleanSymbol] || (now - lastAnomalyAlerts[item.cleanSymbol] > 5 * 60 * 1000))) {
-                        playAlert();
-                        window.showToast(
-                            `🚨 ПРОБІЙ ПАТЕРНУ: ${item.cleanSymbol}`,
-                            `Поточний спред: <b style="color:#00d67c">${spread.toFixed(2)}%</b>`
-                        );
-                        lastAnomalyAlerts[item.cleanSymbol] = now;
-                    }
-                }
-            }
-
-            let typeTag = 'FUT ↔ FUT';
-            if (item.buyEx.endsWith(' Spot') && !item.sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
-            else if (!item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
-            else if (item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'SPOT ↔ SPOT';
-
-            html += generateArbCardHtml(
-                item.cleanSymbol, spread,
-                item.buyEx, { symbol: bData.symbol, ask: bData.ask, rate: bData.rate, vol: bData.vol },
-                item.sellEx, { symbol: sData.symbol, bid: sData.bid, rate: sData.rate, vol: sData.vol },
-                true, typeTag 
-            );
-        } else {
-            html += `
-            <div class="arb-card" style="opacity: 0.6; text-align:center; padding: 20px;">
-                <div style="font-weight:bold; margin-bottom:10px;">${item.cleanSymbol}</div>
-                <div style="font-size:0.85em; color:#848e9c;">Немає даних.</div>
-                <button class="btn-submit" style="background:#e74c3c; color:#fff; width:auto; padding:5px 15px; margin-top:10px;" onclick="toggleWatchlist('${item.cleanSymbol}')">Видалити</button>
-            </div>`;
-        }
-    });
-
-    wlGrid.innerHTML = html;
-};
 
 // === ЛОГІКА ОНОВЛЕНЬ ===
 ipcRenderer.on('update_downloaded', () => {

@@ -364,7 +364,6 @@ window.forceUpdate = function() {
 const formatCurrency = (val) => val >= 1e6 ? '$'+(val/1e6).toFixed(2)+'M' : val >= 1e3 ? '$'+(val/1e3).toFixed(2)+'K' : '$'+val.toFixed(0);
 window.openLinks = function(u1, u2=null) { if(u1) shell.openExternal(u1); if(u2) setTimeout(()=>shell.openExternal(u2),200); };
 
-// ФІКС: Генерація лінків для Споту та Ф'ючерсів
 function getLinks(exName, sym, cleanSym) {
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
@@ -408,13 +407,11 @@ async function fetchMarketData() {
         const globalRatesMap = {}; 
         const spotSets = { 'MEXC': new Set(), 'Gate.io': new Set(), 'Binance': new Set(), 'Bybit': new Set(), 'Bitget': new Set() };
 
-        // ФІКС СПОТУ: Тепер ми тягнемо повноцінні стакани споту як окремі біржі
         const spotPromises = settings.activeExchanges.map(async (baseEx) => {
             try {
                 const addSpot = (sym, cSym, b, a, v) => {
                     if (isNaN(b) || isNaN(a) || b===0 || a===0) return;
                     if (!crossData[cSym]) crossData[cSym] = {};
-                    // Додаємо Спот як окрему біржу з суфіксом " Spot"
                     crossData[cSym][`${baseEx} Spot`] = { symbol: sym, rate: 0, bid: b, ask: a, vol: v, isSpot: true };
                     spotSets[baseEx].add(cSym); 
                 };
@@ -474,7 +471,6 @@ async function fetchMarketData() {
                     coin.allRatesMap = globalRatesMap[cleanSymbol] || {}; 
                     coin.cleanSymbol = cleanSymbol;
                     coin.exchange = ex;
-                    // Фандінг показуємо тільки для ф'ючерсів
                     if (!coin.isSpot) {
                         if (coin.rate > 0) positiveFunding.push(coin);
                         if (coin.rate < 0) negativeFunding.push(coin);
@@ -482,7 +478,6 @@ async function fetchMarketData() {
                 }
             });
 
-            // Цикл пошуку арбітражу (Тепер Спот vs Ф'ючерс також працює!)
             if (exs.length >= 2) {
                 for (let i=0; i<exs.length; i++) {
                     for (let j=0; j<exs.length; j++) {
@@ -492,10 +487,14 @@ async function fetchMarketData() {
 
                         if (ex1.vol < minLim || ex1.vol > maxLim || ex2.vol < minLim || ex2.vol > maxLim) continue;
 
+                        // ФІКС 2: Логіка сортування споту та ф'ючерсів
+                        // Не можна шортити спот (тобто ex2 не може бути спотом)
+                        if (ex2.isSpot) continue; 
+                        // Не потрібно порівнювати Спот зі Спотом
+                        if (ex1.isSpot && ex2.isSpot) continue;
+
                         let typeTag = 'FUT ↔ FUT';
                         if (ex1.isSpot && !ex2.isSpot) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
-                        else if (!ex1.isSpot && ex2.isSpot) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
-                        else if (ex1.isSpot && ex2.isSpot) typeTag = 'SPOT ↔ SPOT';
 
                         const spread = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
                         if (spread >= 0.15 && spread <= 15) {
@@ -888,7 +887,7 @@ function renderArbitrageGrid(arbData) {
             item.buyEx, { symbol: item.buySymbol, ask: item.buyPrice, rate: item.buyRate, vol: item.buyVol }, 
             item.sellEx, { symbol: item.sellSymbol, bid: item.sellPrice, rate: item.sellRate, vol: item.sellVol },
             false,
-            item.typeTag // Передаємо бейдж
+            item.typeTag 
         );
     });
     grid.innerHTML = html;
@@ -910,11 +909,9 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
     
-    // Визначаємо тип угоди (Спот чи Ф'ючерс), якщо не передано напряму
     let typeTag = passedTypeTag || 'FUT ↔ FUT';
     if (!passedTypeTag) {
         if (buyEx.endsWith(' Spot') && !sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
-        else if (!buyEx.endsWith(' Spot') && sellEx.endsWith(' Spot')) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
         else if (buyEx.endsWith(' Spot') && sellEx.endsWith(' Spot')) typeTag = 'SPOT ↔ SPOT';
     }
 
@@ -955,6 +952,7 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
         }
     }
 
+    // ФІКС 1: Перемістили бейдж typeTag під об'єм ліквідності
     return `
         <div class="arb-card">
             <div class="arb-top">
@@ -964,11 +962,11 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                         <span class="symbol" title="${cleanSymbol}">${cleanSymbol}</span>
                         ${isWatchlist ? bellIcon : ''}
                     </div>
-                    <span class="vol-badge" style="width: max-content;">Vol: ${formatCurrency(maxVol)}</span>
+                    <span class="vol-badge" style="width: max-content; display: inline-block; margin-bottom: 4px;">Vol: ${formatCurrency(maxVol)}</span>
+                    <div style="background:#2b3139; color:#f0b90b; font-size:0.7em; padding:2px 8px; border-radius:4px; white-space:nowrap; border: 1px solid #f0b90b; font-weight:bold; width: max-content;">${typeTag}</div>
                 </div>
-                <div class="arb-spread-box" style="position:relative;">
-                    <div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%); background:#2b3139; color:#f0b90b; font-size:0.7em; padding:2px 8px; border-radius:4px; white-space:nowrap; border: 1px solid #f0b90b; font-weight:bold;">${typeTag}</div>
-                    <div style="font-size: 0.75em; color: #848e9c; margin-top:6px;">Спред Ціни:</div>
+                <div class="arb-spread-box">
+                    <div style="font-size: 0.75em; color: #848e9c; margin-top:0px;">Спред Ціни:</div>
                     <div class="arb-spread-val">${sStr}</div>
                     ${avgSpreadHtml}
                 </div>
@@ -1096,7 +1094,7 @@ async function generateChartPage(symbol, ex1, ex2, res) {
                     if (f.time >= timestamps[0] && f.time <= timestamps[timestamps.length - 1]) {
                         let cIdx = 0, mD = Infinity;
                         timestamps.forEach((t, i) => { if(Math.abs(t-f.time)<mD) {mD=Math.abs(t-f.time); cIdx=i;} });
-                        let col = f.rate > 0 ? 'rgba(0, 214, 124, 0.9)' : 'rgba(231, 76, 60, 0.9)'; // ФІКС: Плюсовий зелений
+                        let col = f.rate > 0 ? 'rgba(0, 214, 124, 0.9)' : 'rgba(231, 76, 60, 0.9)'; 
                         annotationsObj[`f_${name}_${idx}`] = { type: 'line', xMin: cIdx, xMax: cIdx, borderColor: col, borderWidth: 2, borderDash: [4, 4], label: { display: true, content: `💰 Фандінг (${name}): ${(f.rate * 100).toFixed(4)}%`, position: pos, backgroundColor: col, color: 'white', font: { size: 10 }, yAdjust: off > 0 ? off + (idx % 3) * 18 : off - (idx % 3) * 18 } };
                     }
                 });
@@ -1270,8 +1268,6 @@ window.processWatchlist = function() {
 
             let typeTag = 'FUT ↔ FUT';
             if (item.buyEx.endsWith(' Spot') && !item.sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
-            else if (!item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
-            else if (item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'SPOT ↔ SPOT';
 
             html += generateArbCardHtml(
                 item.cleanSymbol, spread,

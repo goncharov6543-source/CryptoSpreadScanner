@@ -292,23 +292,19 @@ window.switchTab = function(index) {
     if (index === 3) renderHistoryTab(); 
 };
 
-// Оновлена логіка завантаження при старті
 window.onload = async () => {
     loadSettingsFromLocal();
     loadSoundFiles();
     window.switchTab(0); 
     
-    // Спочатку отримуємо дані ринку, щоб globalCrossData була готова
     await fetchMarketData();
 
-    // Тепер відновлюємо патерни для вочліста
     if (settings.watchlist && settings.watchlist.length > 0) {
         for (const item of settings.watchlist) {
             await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
         }
     }
 
-    // Тільки тепер малюємо вочліст
     processWatchlist(); 
 };
 
@@ -486,18 +482,16 @@ async function fetchMarketData() {
                         const ex1 = exMap[ex1N], ex2 = exMap[ex2N];
 
                         if (ex1.vol < minLim || ex1.vol > maxLim || ex2.vol < minLim || ex2.vol > maxLim) continue;
-
-                        // ФІКС 2: Логіка сортування споту та ф'ючерсів
-                        // Не можна шортити спот (тобто ex2 не може бути спотом)
                         if (ex2.isSpot) continue; 
-                        // Не потрібно порівнювати Спот зі Спотом
                         if (ex1.isSpot && ex2.isSpot) continue;
 
                         let typeTag = 'FUT ↔ FUT';
                         if (ex1.isSpot && !ex2.isSpot) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
 
                         const spread = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
-                        if (spread >= 0.15 && spread <= 15) {
+                        
+                        // ФІКС 2: Збільшили максимальний спред до 999%, щоб не фільтрувало 30% спреди
+                        if (spread >= 0.15 && spread <= 999) {
                             priceArbOpps.push({
                                 cleanSymbol, spreadPct: spread, typeTag: typeTag,
                                 buyEx: ex1N, buySymbol: ex1.symbol, buyPrice: ex1.ask, buyRate: ex1.rate, buyVol: ex1.vol,
@@ -505,7 +499,11 @@ async function fetchMarketData() {
                             });
 
                             if (document.getElementById('tab-2').classList.contains('active') && spread >= alertSpreadLimit) {
-                                if (!alertedCoins.has(cleanSymbol)) {
+                                // ФІКС 1: Перевіряємо чи монета в муті для основного списку
+                                const inWl = settings.watchlist.find(wl => wl.cleanSymbol === cleanSymbol);
+                                const isMuted = inWl ? inWl.isMuted : false;
+                                
+                                if (!alertedCoins.has(cleanSymbol) && !isMuted) {
                                     playAlert();
                                     window.showToast(`🚨 ВИСОКИЙ СПРЕД: ${spread.toFixed(2)}%`, `Монета: <b>${cleanSymbol}</b><br>Купити: ${ex1N}<br>Продати: ${ex2N}`);
                                     alertedCoins.add(cleanSymbol);
@@ -703,7 +701,6 @@ async function renderPositionsTab() {
     }
 }
 
-// Функція для розгортання історії
 window.toggleHistoryDetails = function(id) {
     const el = document.getElementById(id);
     if(el) {
@@ -893,7 +890,6 @@ function renderArbitrageGrid(arbData) {
     grid.innerHTML = html;
 }
 
-// ФІКС: Функція Mute
 window.toggleMute = function(cleanSymbol) {
     const item = settings.watchlist.find(i => i.cleanSymbol === cleanSymbol);
     if (item) {
@@ -952,7 +948,6 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
         }
     }
 
-    // ФІКС 1: Перемістили бейдж typeTag під об'єм ліквідності
     return `
         <div class="arb-card">
             <div class="arb-top">
@@ -995,12 +990,12 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                     </div>
                 </div>
             </div>
-            <button class="btn-chart" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Історія спреду (12 годин)</button>
+            <button class="btn-chart" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Історія спреду</button>
         </div>
     `;
 }
 
-// --- ЛОГІКА ГРАФІКІВ У НОВІЙ ВКЛАДЦІ CHROME ---
+// --- ЛОГІКА ГРАФІКІВ У НОВІЙ ВКЛАДЦІ CHROME (З ПРОГРЕС-БАРОМ) ---
 const chartPort = 3001;
 const chartServer = http.createServer((req, res) => {
     const url = new URL(req.url, `http://localhost:${chartPort}`);
@@ -1012,47 +1007,95 @@ const chartServer = http.createServer((req, res) => {
         const symbol = url.searchParams.get('symbol');
         const ex1 = url.searchParams.get('ex1'); 
         const ex2 = url.searchParams.get('ex2'); 
-        return generateChartPage(symbol, ex1, ex2, res);
+        const days = parseFloat(url.searchParams.get('days')) || 0.5; // За замовчуванням 12 годин
+        return generateChartPageHTML(symbol, ex1, ex2, days, res);
+    }
+    if (url.pathname === '/stream-chart') {
+        return handleChartStream(url, res);
     }
     res.writeHead(404); res.end();
 });
 chartServer.listen(chartPort);
 
 window.openChartWindow = function(symbol, ex1, ex2) {
-    shell.openExternal(`http://localhost:${chartPort}/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}`);
+    shell.openExternal(`http://localhost:${chartPort}/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=0.5`);
 };
 
-async function getKlineData(exName, sym) {
-    try {
-        const isSpot = exName.endsWith(' Spot');
-        const ex = exName.replace(' Spot', '');
+// ФІКС 4: Розумний парсинг свічок чанками з рандомними паузами
+async function getKlineDataChunked(exName, sym, totalCandles, onProgress) {
+    const isSpot = exName.endsWith(' Spot');
+    const ex = exName.replace(' Spot', '');
+    let allData = [];
+    let currentEndTime = Date.now();
+    
+    while (allData.length < totalCandles) {
+        let url = '';
+        let toSec = Math.floor(currentEndTime / 1000);
+        let toMs = currentEndTime;
+        let limit = Math.min(1000, totalCandles - allData.length);
         
-        if (isSpot) {
-            if(ex==='Binance') return (await axios.get(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-            if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-            if(ex==='MEXC') return (await axios.get(`https://api.mexc.com/api/v3/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-            if(ex==='Gate.io') return (await axios.get(`https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${sym.replace('USDT','_USDT')}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0])*1000,close:parseFloat(k[2])}));
-            if(ex==='Bitget') return (await axios.get(`https://api.bitget.com/api/v2/spot/market/candles?symbol=${sym}&granularity=1min&limit=720`)).data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-        } else {
-            if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-            if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-            if(ex==='MEXC') { 
-                const r = await axios.get(`https://contract.mexc.com/api/v1/contract/kline/${sym.replace('USDT','_USDT')}?interval=Min1`);
-                const d = r.data.data;
-                let arr = [];
-                for(let i=0; i<d.time.length; i++) {
-                    arr.push({ time: d.time[i] * 1000, close: parseFloat(d.close[i]) });
-                }
-                return arr.slice(-720);
+        try {
+            let chunk = [];
+            if (isSpot) {
+                if(ex==='Binance') url = `https://api.binance.com/api/v3/klines?symbol=${sym}&interval=1m&limit=${limit}&endTime=${toMs}`;
+                else if(ex==='Bybit') url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=1&limit=${limit}&end=${toMs}`;
+                else if(ex==='MEXC') url = `https://api.mexc.com/api/v3/klines?symbol=${sym}&interval=1m&limit=${limit}&endTime=${toMs}`;
+                else if(ex==='Gate.io') url = `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${sym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}`;
+                else if(ex==='Bitget') url = `https://api.bitget.com/api/v2/spot/market/candles?symbol=${sym}&granularity=1min&limit=${limit}&endTime=${toMs}`;
+            } else {
+                if(ex==='Binance') url = `https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1m&limit=${limit}&endTime=${toMs}`;
+                else if(ex==='Bybit') url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=1&limit=${limit}&end=${toMs}`;
+                else if(ex==='MEXC') url = `https://contract.mexc.com/api/v1/contract/kline/${sym.replace('USDT','_USDT')}?interval=Min1&end=${toSec}`; 
+                else if(ex==='Gate.io') url = `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${sym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}`;
+                else if(ex==='Bitget') url = `https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=1m&limit=${limit}&endTime=${toMs}`;
             }
-            if(ex==='Gate.io') return (await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${sym.replace('USDT','_USDT')}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k.t)*1000,close:parseFloat(k.c)}));
-            if(ex==='Bitget') return (await axios.get(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=1m&limit=720`)).data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            
+            const r = await axios.get(url, { timeout: 10000 });
+            
+            if(isSpot) {
+                if(ex==='Binance') chunk = r.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+                else if(ex==='Bybit') chunk = r.data.result.list.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])})).reverse();
+                else if(ex==='MEXC') chunk = r.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+                else if(ex==='Gate.io') chunk = r.data.map(k=>({time:parseInt(k[0])*1000,close:parseFloat(k[2])}));
+                else if(ex==='Bitget') chunk = r.data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            } else {
+                if(ex==='Binance') chunk = r.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+                else if(ex==='Bybit') chunk = r.data.result.list.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])})).reverse();
+                else if(ex==='MEXC') {
+                    const d = r.data.data;
+                    if(d && d.time) {
+                        for(let i=0; i<d.time.length; i++) chunk.push({ time: d.time[i] * 1000, close: parseFloat(d.close[i]) });
+                    }
+                }
+                else if(ex==='Gate.io') chunk = r.data.map(k=>({time:parseInt(k.t)*1000,close:parseFloat(k.c)}));
+                else if(ex==='Bitget') chunk = r.data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            }
+            
+            if (!chunk || chunk.length === 0) break;
+            
+            chunk.sort((a,b) => a.time - b.time); 
+            
+            allData = chunk.concat(allData);
+            currentEndTime = chunk[0].time - 1; 
+            
+            onProgress(chunk.length);
+            
+            if (chunk.length < limit * 0.5) break; 
+            if (allData.length >= totalCandles) break;
+            
+            // Рандомна пауза щоб не зловити рейт-ліміт (400-1000 мс)
+            await new Promise(res => setTimeout(res, 400 + Math.random() * 600));
+            
+        } catch(e) {
+            console.log(`Kline API Error ${exName}:`, e.message);
+            break; 
         }
-    } catch(e) { console.log(`Kline error ${exName}:`, e.message); } return [];
+    }
+    return allData.slice(-totalCandles);
 }
 
 async function getFundingHistory(exName, sym) {
-    if (exName.endsWith(' Spot')) return []; // Спот не має фандінгу
+    if (exName.endsWith(' Spot')) return []; 
     const ex = exName.replace(' Spot', '');
     try {
         if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${sym}&limit=40`)).data.map(i=>({time:parseInt(i.fundingTime),rate:parseFloat(i.fundingRate)}));
@@ -1063,108 +1106,167 @@ async function getFundingHistory(exName, sym) {
     } catch(e) {} return [];
 }
 
-async function generateChartPage(symbol, ex1, ex2, res) {
+async function handleChartStream(url, res) {
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
+    
+    const symbol = url.searchParams.get('symbol');
+    const ex1 = url.searchParams.get('ex1'); 
+    const ex2 = url.searchParams.get('ex2');
+    const days = parseFloat(url.searchParams.get('days')) || 0.5;
+    
+    const totalCandles = Math.floor(days * 24 * 60);
+    let loaded1 = 0; let loaded2 = 0;
+    
+    const sendProgress = () => {
+        let pct = Math.floor(((loaded1 + loaded2) / (totalCandles * 2)) * 100);
+        if (pct > 100) pct = 100;
+        res.write(`data: ${JSON.stringify({type: 'progress', pct})}\n\n`);
+    };
+
     try {
-        const [data1, data2, f1, f2] = await Promise.all([
-            getKlineData(ex1, symbol), getKlineData(ex2, symbol),
-            getFundingHistory(ex1, symbol), getFundingHistory(ex2, symbol)
-        ]);
+        const data1 = await getKlineDataChunked(ex1, symbol, totalCandles, (c) => { loaded1 += c; sendProgress(); });
+        const data2 = await getKlineDataChunked(ex2, symbol, totalCandles, (c) => { loaded2 += c; sendProgress(); });
+        
+        const f1 = await getFundingHistory(ex1, symbol); 
+        const f2 = await getFundingHistory(ex2, symbol);
 
-        if (data1.length === 0 || data2.length === 0) {
-            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-            res.end(`<h2 style="color:white; font-family:sans-serif; text-align:center;">❌ Немає достатньо даних для графіка ${symbol} (Перевірте чи монета доступна на обох біржах)</h2>`);
-            return;
-        }
+        res.write(`data: ${JSON.stringify({type: 'done', data1, data2, f1, f2})}\n\n`);
+    } catch(e) {
+        res.write(`data: ${JSON.stringify({type: 'error', msg: e.message})}\n\n`);
+    }
+    res.end();
+}
 
-        const minLength = Math.min(data1.length, data2.length);
-        const d1 = data1.slice(-minLength);
-        const d2 = data2.slice(-minLength);
-
-        let spreads = [], labels = [], relativeLabels = [], timestamps = [], rawPrices1 = [], rawPrices2 = [];
-        for (let i = 0; i < minLength; i++) {
-            timestamps.push(d1[i].time); rawPrices1.push(d1[i].close); rawPrices2.push(d2[i].close);
-            spreads.push((((d2[i].close - d1[i].close) / d1[i].close) * 100).toFixed(4));
-            let d = new Date(d1[i].time); labels.push(`${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`); relativeLabels.push(`-${minLength - i} хв`);
-        }
-
-        let annotationsObj = {};
-        if (timestamps.length > 0) {
-            const addLines = (hist, name, pos, off) => {
-                hist.forEach((f, idx) => {
-                    if (f.time >= timestamps[0] && f.time <= timestamps[timestamps.length - 1]) {
-                        let cIdx = 0, mD = Infinity;
-                        timestamps.forEach((t, i) => { if(Math.abs(t-f.time)<mD) {mD=Math.abs(t-f.time); cIdx=i;} });
-                        let col = f.rate > 0 ? 'rgba(0, 214, 124, 0.9)' : 'rgba(231, 76, 60, 0.9)'; 
-                        annotationsObj[`f_${name}_${idx}`] = { type: 'line', xMin: cIdx, xMax: cIdx, borderColor: col, borderWidth: 2, borderDash: [4, 4], label: { display: true, content: `💰 Фандінг (${name}): ${(f.rate * 100).toFixed(4)}%`, position: pos, backgroundColor: col, color: 'white', font: { size: 10 }, yAdjust: off > 0 ? off + (idx % 3) * 18 : off - (idx % 3) * 18 } };
-                    }
-                });
-            };
-            addLines(f1, ex1, 'start', 5); addLines(f2, ex2, 'end', -5);
-        }
-
-        const html = `
-        <!DOCTYPE html>
-        <html lang="uk">
-        <head>
-            <meta charset="UTF-8">
-            <title>Спред: ${symbol}</title>
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-            <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
-            <style>
-                body { font-family: 'Segoe UI', sans-serif; background: #0f1216; color: white; padding: 20px; margin: 0; }
-                .header { display: flex; justify-content: space-between; align-items: center; max-width: 1400px; margin: 0 auto 20px auto; border-bottom: 2px solid #2b3139; padding-bottom: 15px;}
-                .chart-container { width: 95%; max-width: 1400px; height: 80vh; margin: auto; background: #1e2329; padding: 20px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);}
-                .btn-refresh { background: #f0b90b; color: #000; border: none; padding: 10px 20px; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 1.1em;}
-                .btn-refresh:hover { background: #ffe066; transform: scale(1.05); }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h2>📊 Історія спреду ${symbol} (${ex1} vs ${ex2}) за 12 годин</h2>
-                <button class="btn-refresh" onclick="location.reload()">🔄 Оновити графік</button>
+function generateChartPageHTML(symbol, ex1, ex2, days, res) {
+    const html = `
+    <!DOCTYPE html>
+    <html lang="uk">
+    <head>
+        <meta charset="UTF-8">
+        <title>Спред: ${symbol}</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; background: #0f1216; color: white; padding: 20px; margin: 0; }
+            .header { display: flex; justify-content: space-between; align-items: center; max-width: 1400px; margin: 0 auto 20px auto; border-bottom: 2px solid #2b3139; padding-bottom: 15px;}
+            .chart-container { width: 95%; max-width: 1400px; height: 80vh; margin: auto; background: #1e2329; padding: 20px; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); position: relative;}
+            .btn-time { background: #0b0e11; border: 1px solid #3c444f; color: #848e9c; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; margin-left: 10px;}
+            .btn-time.active { background: #f0b90b; color: #000; border-color: #f0b90b; }
+            .btn-time:hover:not(.active) { background: #2b3139; color: #fff; }
+            #loader-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(30,35,41,0.9); z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h2>📊 Історія спреду ${symbol} (${ex1} vs ${ex2})</h2>
+            <div>
+                <button class="btn-time ${days==0.5 ? 'active':''}" onclick="window.location.href='/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=0.5'">12 Годин</button>
+                <button class="btn-time ${days==3 ? 'active':''}" onclick="window.location.href='/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=3'">3 Дні</button>
+                <button class="btn-time ${days==7 ? 'active':''}" onclick="window.location.href='/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=7'">7 Днів</button>
             </div>
-            <div class="chart-container"><canvas id="spreadChart"></canvas></div>
-            <script>
+        </div>
+        <div class="chart-container">
+            <div id="loader-overlay">
+                <h3 style="color:#f0b90b; margin-bottom: 20px;">🔄 Парсинг даних з бірж...</h3>
+                <div style="width: 300px; height: 15px; background: #0b0e11; border-radius: 10px; overflow: hidden; border: 1px solid #3c444f;">
+                    <div id="progress-bar" style="width: 0%; height: 100%; background: #00d67c; transition: width 0.3s;"></div>
+                </div>
+                <div id="progress-text" style="margin-top: 10px; color: #848e9c; font-weight: bold;">0%</div>
+            </div>
+            <canvas id="spreadChart"></canvas>
+        </div>
+        
+        <script>
+            const evtSource = new EventSource('/stream-chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=${days}');
+            evtSource.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'progress') {
+                    document.getElementById('progress-bar').style.width = data.pct + '%';
+                    document.getElementById('progress-text').innerText = data.pct + '%';
+                } else if (data.type === 'done') {
+                    document.getElementById('loader-overlay').style.display = 'none';
+                    evtSource.close();
+                    if (data.data1.length === 0 || data.data2.length === 0) {
+                        alert('Немає достатньо даних для графіка (Перевірте чи монета доступна на обох біржах)');
+                        return;
+                    }
+                    renderChart(data.data1, data.data2, data.f1, data.f2);
+                } else if (data.type === 'error') {
+                    document.getElementById('progress-text').innerText = 'Помилка: ' + data.msg;
+                    document.getElementById('progress-text').style.color = '#e74c3c';
+                    evtSource.close();
+                }
+            };
+
+            function renderChart(d1, d2, f1, f2) {
+                const minLength = Math.min(d1.length, d2.length);
+                d1 = d1.slice(-minLength);
+                d2 = d2.slice(-minLength);
+
+                let spreads = [], labels = [], relativeLabels = [], timestamps = [], rawPrices1 = [], rawPrices2 = [];
+                const isDays = ${days} > 0.5;
+                for (let i = 0; i < minLength; i++) {
+                    timestamps.push(d1[i].time); rawPrices1.push(d1[i].close); rawPrices2.push(d2[i].close);
+                    spreads.push((((d2[i].close - d1[i].close) / d1[i].close) * 100).toFixed(4));
+                    let d = new Date(d1[i].time); 
+                    
+                    let lbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+                    if (isDays) lbl = d.getDate() + '/' + (d.getMonth()+1) + ' ' + lbl;
+                    
+                    labels.push(lbl); 
+                    relativeLabels.push('-' + (minLength - i) + ' хв');
+                }
+
+                let annotationsObj = {};
+                if (timestamps.length > 0) {
+                    const addLines = (hist, name, pos, off) => {
+                        hist.forEach((f, idx) => {
+                            if (f.time >= timestamps[0] && f.time <= timestamps[timestamps.length - 1]) {
+                                let cIdx = 0, mD = Infinity;
+                                timestamps.forEach((t, i) => { if(Math.abs(t-f.time)<mD) {mD=Math.abs(t-f.time); cIdx=i;} });
+                                let col = f.rate > 0 ? 'rgba(0, 214, 124, 0.9)' : 'rgba(231, 76, 60, 0.9)'; 
+                                annotationsObj['f_'+name+'_'+idx] = { type: 'line', xMin: cIdx, xMax: cIdx, borderColor: col, borderWidth: 2, borderDash: [4, 4], label: { display: true, content: '💰 Фандінг: ' + (f.rate * 100).toFixed(4) + '%', position: pos, backgroundColor: col, color: 'white', font: { size: 10 }, yAdjust: off > 0 ? off + (idx % 3) * 18 : off - (idx % 3) * 18 } };
+                            }
+                        });
+                    };
+                    addLines(f1, '${ex1}', 'start', 5); addLines(f2, '${ex2}', 'end', -5);
+                }
+
                 const ctx = document.getElementById('spreadChart').getContext('2d');
-                const relLabels = ${JSON.stringify(relativeLabels)};
-                const pr1 = ${JSON.stringify(rawPrices1)};
-                const pr2 = ${JSON.stringify(rawPrices2)};
                 new Chart(ctx, {
                     type: 'line',
-                    data: { labels: ${JSON.stringify(labels)}, datasets: [{ label: 'Спред (%)', data: ${JSON.stringify(spreads)}, borderColor: '#f0b90b', backgroundColor: 'rgba(240, 185, 11, 0.1)', borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 6 }] },
+                    data: { labels: labels, datasets: [{ label: 'Спред (%)', data: spreads, borderColor: '#f0b90b', backgroundColor: 'rgba(240, 185, 11, 0.1)', borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 6 }] },
                     options: { 
                         responsive: true, 
                         maintainAspectRatio: false, 
                         layout: { padding: { top: 60, bottom: 60 } },
                         interaction: { mode: 'index', intersect: false }, 
                         plugins: { 
-                            tooltip: { callbacks: { title: c => c[0].label + ' (' + relLabels[c[0].dataIndex] + ')', afterLabel: c => ['Ціна ${ex1}: $' + pr1[c.dataIndex], 'Ціна ${ex2}: $' + pr2[c.dataIndex]] } }, 
-                            annotation: { clip: false, annotations: ${JSON.stringify(annotationsObj)} } 
+                            tooltip: { callbacks: { title: c => c[0].label, afterLabel: c => ['Ціна ${ex1}: $' + rawPrices1[c.dataIndex], 'Ціна ${ex2}: $' + rawPrices2[c.dataIndex]] } }, 
+                            annotation: { clip: false, annotations: annotationsObj } 
                         }, 
                         scales: { 
                             y: { title: { display: true, text: 'Спред (%)', color: '#848e9c' }, grid: { color: '#2b3139' } }, 
-                            x: { title: { display: true, text: 'Локальний Час', color: '#848e9c' }, grid: { color: '#2b3139' } } 
+                            x: { title: { display: true, text: 'Локальний Час', color: '#848e9c' }, grid: { color: '#2b3139' } },
+                            xAxes: [{ ticks: { maxTicksLimit: 20 } }]
                         } 
                     }
                 });
-            </script>
-        </body>
-        </html>
-        `;
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(html);
-    } catch (e) {
-        res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(`<h2 style="color:white; font-family:sans-serif; text-align:center;">❌ Помилка генерації: ${e.message}</h2>`);
-    }
+            }
+        </script>
+    </body>
+    </html>
+    `;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(html);
 }
 
 // --- ФОРМУВАННЯ ПАТЕРНУ ДЛЯ ВОЧЛІСТУ ---
 async function calculateCoinPattern(symbol, buyEx, sellEx) {
     try {
         const [d1, d2] = await Promise.all([
-            getKlineData(buyEx, symbol),
-            getKlineData(sellEx, symbol)
+            getKlineDataChunked(buyEx, symbol, 720, () => {}),
+            getKlineDataChunked(sellEx, symbol, 720, () => {})
         ]);
         
         if (!d1 || !d2 || d1.length < 60) return;
@@ -1268,6 +1370,8 @@ window.processWatchlist = function() {
 
             let typeTag = 'FUT ↔ FUT';
             if (item.buyEx.endsWith(' Spot') && !item.sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
+            else if (!item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
+            else if (item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'SPOT ↔ SPOT';
 
             html += generateArbCardHtml(
                 item.cleanSymbol, spread,

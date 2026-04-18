@@ -171,7 +171,6 @@ async function updateBalancesUI() {
         btn.className = 'api-status-btn green';
     }
 
-    // ФІКС: Зберігаємо дані для графіка тільки тоді, коли немає активних позицій!
     if (Object.keys(lastKnownPositions).length === 0) {
         const lastRecord = settings.balanceHistory.length > 0 ? settings.balanceHistory[settings.balanceHistory.length - 1].total : null;
         if (lastRecord === null || Math.abs(lastRecord - result.total) > 0.01) {
@@ -251,7 +250,6 @@ window.renderBalanceChart = function(hours) {
     balChartInstance = new Chart(canvas.getContext('2d'), {
         type: 'line',
         data: { labels, datasets: [{ label: 'Сумарний Баланс ($)', data: dataPts, borderColor: '#f0b90b', backgroundColor: 'rgba(240, 185, 11, 0.1)', borderWidth: 3, fill: true, tension: 0.1, pointRadius: 2, pointHoverRadius: 6 }] },
-        // ФІКС: mode: 'index', intersect: false дозволяє бачити точки наводячи мишкою будь-де на стовпчик
         options: { 
             responsive: true, 
             maintainAspectRatio: false, 
@@ -366,13 +364,18 @@ window.forceUpdate = function() {
 const formatCurrency = (val) => val >= 1e6 ? '$'+(val/1e6).toFixed(2)+'M' : val >= 1e3 ? '$'+(val/1e3).toFixed(2)+'K' : '$'+val.toFixed(0);
 window.openLinks = function(u1, u2=null) { if(u1) shell.openExternal(u1); if(u2) setTimeout(()=>shell.openExternal(u2),200); };
 
-function getLinks(ex, sym, cleanSym) {
+// ФІКС: Генерація лінків для Споту та Ф'ючерсів
+function getLinks(exName, sym, cleanSym) {
+    const isSpot = exName.endsWith(' Spot');
+    const ex = exName.replace(' Spot', '');
     let fUrl = ''; let sUrl = null;
-    if(ex === 'Binance') { fUrl = `https://www.binance.com/en/futures/${sym}`; sUrl = `https://www.binance.com/en/trade/${cleanSym.replace('USDT', '_USDT')}`; }
-    else if(ex === 'Bybit') { fUrl = `https://www.bybit.com/trade/usdt/${sym}`; sUrl = `https://www.bybit.com/en/trade/spot/${cleanSym.replace('USDT', '/USDT')}`; }
-    else if(ex === 'MEXC') { fUrl = `https://futures.mexc.com/exchange/${sym}`; sUrl = `https://www.mexc.com/exchange/${cleanSym.replace('USDT', '_USDT')}`; }
-    else if(ex === 'Gate.io') { fUrl = `https://www.gate.io/futures/USDT/${sym}`; sUrl = `https://www.gate.io/trade/${cleanSym.replace('USDT', '_USDT')}`; }
-    else if(ex === 'Bitget') { fUrl = `https://www.bitget.com/futures/usdt/${sym}`; sUrl = `https://www.bitget.com/spot/${cleanSym}`; }
+    
+    if(ex === 'Binance') { fUrl = isSpot ? `https://www.binance.com/en/trade/${cleanSym.replace('USDT', '_USDT')}` : `https://www.binance.com/en/futures/${sym}`; sUrl = `https://www.binance.com/en/trade/${cleanSym.replace('USDT', '_USDT')}`; }
+    else if(ex === 'Bybit') { fUrl = isSpot ? `https://www.bybit.com/en/trade/spot/${cleanSym.replace('USDT', '/USDT')}` : `https://www.bybit.com/trade/usdt/${sym}`; sUrl = `https://www.bybit.com/en/trade/spot/${cleanSym.replace('USDT', '/USDT')}`; }
+    else if(ex === 'MEXC') { fUrl = isSpot ? `https://www.mexc.com/exchange/${cleanSym.replace('USDT', '_USDT')}` : `https://futures.mexc.com/exchange/${sym}`; sUrl = `https://www.mexc.com/exchange/${cleanSym.replace('USDT', '_USDT')}`; }
+    else if(ex === 'Gate.io') { fUrl = isSpot ? `https://www.gate.io/trade/${cleanSym.replace('USDT', '_USDT')}` : `https://www.gate.io/futures/USDT/${sym}`; sUrl = `https://www.gate.io/trade/${cleanSym.replace('USDT', '_USDT')}`; }
+    else if(ex === 'Bitget') { fUrl = isSpot ? `https://www.bitget.com/spot/${cleanSym}` : `https://www.bitget.com/futures/usdt/${sym}`; sUrl = `https://www.bitget.com/spot/${cleanSym}`; }
+    
     return { fUrl, sUrl };
 }
 
@@ -405,14 +408,37 @@ async function fetchMarketData() {
         const globalRatesMap = {}; 
         const spotSets = { 'MEXC': new Set(), 'Gate.io': new Set(), 'Binance': new Set(), 'Bybit': new Set(), 'Bitget': new Set() };
 
-        const spotPromises = settings.activeExchanges.map(async (ex) => {
+        // ФІКС СПОТУ: Тепер ми тягнемо повноцінні стакани споту як окремі біржі
+        const spotPromises = settings.activeExchanges.map(async (baseEx) => {
             try {
-                if(ex === 'MEXC') { const r = await axios.get('https://api.mexc.com/api/v3/ticker/price', { timeout: 3000 }); r.data.forEach(i => spotSets[ex].add(i.symbol.replace('_',''))); }
-                if(ex === 'Gate.io') { const r = await axios.get('https://api.gateio.ws/api/v4/spot/tickers', { timeout: 3000 }); r.data.forEach(i => spotSets[ex].add(i.currency_pair.replace('_',''))); }
-                if(ex === 'Binance') { const r = await axios.get('https://api.binance.com/api/v3/ticker/price', { timeout: 3000 }); r.data.forEach(i => spotSets[ex].add(i.symbol)); }
-                if(ex === 'Bybit') { const r = await axios.get('https://api.bybit.com/v5/market/tickers?category=spot', { timeout: 3000 }); r.data.result.list.forEach(i => spotSets[ex].add(i.symbol)); }
-                if(ex === 'Bitget') { const r = await axios.get('https://api.bitget.com/api/v2/spot/market/tickers', { timeout: 3000 }); r.data.data.forEach(i => spotSets[ex].add(i.symbol)); }
-            } catch(e) { }
+                const addSpot = (sym, cSym, b, a, v) => {
+                    if (isNaN(b) || isNaN(a) || b===0 || a===0) return;
+                    if (!crossData[cSym]) crossData[cSym] = {};
+                    // Додаємо Спот як окрему біржу з суфіксом " Spot"
+                    crossData[cSym][`${baseEx} Spot`] = { symbol: sym, rate: 0, bid: b, ask: a, vol: v, isSpot: true };
+                    spotSets[baseEx].add(cSym); 
+                };
+                if(baseEx === 'MEXC') { 
+                    const r = await axios.get('https://api.mexc.com/api/v3/ticker/24hr', { timeout: 3000 }); 
+                    r.data.forEach(i => addSpot(i.symbol, i.symbol.replace('_',''), parseFloat(i.bidPrice), parseFloat(i.askPrice), parseFloat(i.quoteVolume))); 
+                }
+                if(baseEx === 'Gate.io') { 
+                    const r = await axios.get('https://api.gateio.ws/api/v4/spot/tickers', { timeout: 3000 }); 
+                    r.data.forEach(i => addSpot(i.currency_pair, i.currency_pair.replace('_',''), parseFloat(i.highest_bid), parseFloat(i.lowest_ask), parseFloat(i.quote_volume))); 
+                }
+                if(baseEx === 'Binance') { 
+                    const r = await axios.get('https://api.binance.com/api/v3/ticker/24hr', { timeout: 3000 }); 
+                    r.data.forEach(i => addSpot(i.symbol, i.symbol, parseFloat(i.bidPrice), parseFloat(i.askPrice), parseFloat(i.quoteVolume))); 
+                }
+                if(baseEx === 'Bybit') { 
+                    const r = await axios.get('https://api.bybit.com/v5/market/tickers?category=spot', { timeout: 3000 }); 
+                    r.data.result.list.forEach(i => addSpot(i.symbol, i.symbol, parseFloat(i.bid1Price), parseFloat(i.ask1Price), parseFloat(i.turnover24h))); 
+                }
+                if(baseEx === 'Bitget') { 
+                    const r = await axios.get('https://api.bitget.com/api/v2/spot/market/tickers', { timeout: 3000 }); 
+                    r.data.data.forEach(i => addSpot(i.symbol, i.symbol, parseFloat(i.bestBid), parseFloat(i.bestAsk), parseFloat(i.quoteVolume))); 
+                }
+            } catch(e) { console.log("Spot API Error", baseEx); }
         });
 
         const futuresPromises = settings.activeExchanges.map(async (ex) => {
@@ -422,7 +448,7 @@ async function fetchMarketData() {
                     if (!globalRatesMap[cSym]) globalRatesMap[cSym] = {};
                     globalRatesMap[cSym][ex] = r; 
                     if (!crossData[cSym]) crossData[cSym] = {};
-                    crossData[cSym][ex] = { symbol: sym, rate: r, bid: b, ask: a, vol: v };
+                    crossData[cSym][ex] = { symbol: sym, rate: r, bid: b, ask: a, vol: v, isSpot: false };
                 };
                 if (ex === 'MEXC') { const r = await axios.get('https://contract.mexc.com/api/v1/contract/ticker', { timeout: 4000 }); r.data.data.forEach(i => i.symbol.endsWith('_USDT') && add(i.symbol, i.symbol.replace('_', ''), parseFloat(i.fundingRate), parseFloat(i.bid1), parseFloat(i.ask1), parseFloat(i.amount24))); }
                 if (ex === 'Gate.io') { const r = await axios.get('https://api.gateio.ws/api/v4/futures/usdt/tickers', { timeout: 4000 }); r.data.forEach(i => i.contract.endsWith('_USDT') && add(i.contract, i.contract.replace('_', ''), parseFloat(i.funding_rate), parseFloat(i.highest_bid), parseFloat(i.lowest_ask), parseFloat(i.quote_volume||i.volume_24h_quote||0))); }
@@ -444,15 +470,19 @@ async function fetchMarketData() {
             exs.forEach(ex => {
                 const coin = exMap[ex];
                 if (coin.vol >= minLim && coin.vol <= maxLim) {
-                    coin.hasSpot = spotSets[ex].has(cleanSymbol);
+                    coin.hasSpot = spotSets[ex.replace(' Spot', '')]?.has(cleanSymbol) || false;
                     coin.allRatesMap = globalRatesMap[cleanSymbol] || {}; 
                     coin.cleanSymbol = cleanSymbol;
                     coin.exchange = ex;
-                    if (coin.rate > 0) positiveFunding.push(coin);
-                    if (coin.rate < 0) negativeFunding.push(coin);
+                    // Фандінг показуємо тільки для ф'ючерсів
+                    if (!coin.isSpot) {
+                        if (coin.rate > 0) positiveFunding.push(coin);
+                        if (coin.rate < 0) negativeFunding.push(coin);
+                    }
                 }
             });
 
+            // Цикл пошуку арбітражу (Тепер Спот vs Ф'ючерс також працює!)
             if (exs.length >= 2) {
                 for (let i=0; i<exs.length; i++) {
                     for (let j=0; j<exs.length; j++) {
@@ -462,10 +492,15 @@ async function fetchMarketData() {
 
                         if (ex1.vol < minLim || ex1.vol > maxLim || ex2.vol < minLim || ex2.vol > maxLim) continue;
 
+                        let typeTag = 'FUT ↔ FUT';
+                        if (ex1.isSpot && !ex2.isSpot) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
+                        else if (!ex1.isSpot && ex2.isSpot) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
+                        else if (ex1.isSpot && ex2.isSpot) typeTag = 'SPOT ↔ SPOT';
+
                         const spread = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
                         if (spread >= 0.15 && spread <= 15) {
                             priceArbOpps.push({
-                                cleanSymbol, spreadPct: spread,
+                                cleanSymbol, spreadPct: spread, typeTag: typeTag,
                                 buyEx: ex1N, buySymbol: ex1.symbol, buyPrice: ex1.ask, buyRate: ex1.rate, buyVol: ex1.vol,
                                 sellEx: ex2N, sellSymbol: ex2.symbol, sellPrice: ex2.bid, sellRate: ex2.rate, sellVol: ex2.vol
                             });
@@ -514,7 +549,6 @@ async function renderPositionsTab() {
     const loader = document.getElementById('pos-loader');
     const container = document.getElementById('pos-content');
 
-    // ФІКС: Тільки якщо контейнер порожній, показуємо лоадер (щоб уникнути блимання)
     if (!container.innerHTML.trim()) {
         loader.style.display = 'block';
     }
@@ -595,7 +629,7 @@ async function renderPositionsTab() {
             let totalUnrealized = 0;
             let totalRealized = 0;
             let totalSize = 0;
-            let totalTokens = 0; // ДОДАНО
+            let totalTokens = 0; 
             let exSides = [];
             let prices = [];
 
@@ -603,7 +637,7 @@ async function renderPositionsTab() {
                 totalUnrealized += p.unRealized || 0;
                 totalRealized += p.realized || 0;
                 totalSize += p.sizeUSDT || 0;
-                totalTokens += p.sizeTokens || 0; // ДОДАНО
+                totalTokens += p.sizeTokens || 0; 
                 
                 const col = p.side === 'Long' ? 'color:#00d67c;' : 'color:#e74c3c;';
                 exSides.push(`<span style="font-weight:bold;">${p.exchange}</span> (<span style="${col}">${p.side} ${p.leverage}x</span>)`);
@@ -621,7 +655,6 @@ async function renderPositionsTab() {
             const pnlClass = estProfit >= 0 ? 'pnl-green' : 'pnl-red';
             const sign = estProfit > 0 ? '+' : '';
 
-            // ФІКС: Новий єдиний рядок з вертикальними розділювачами (клас history-summary)
             html += `
             <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
                 <div class="history-summary">
@@ -663,7 +696,7 @@ async function renderPositionsTab() {
         });
 
         container.innerHTML = html;
-        loader.style.display = 'none'; // Ховаємо тільки після рендеру
+        loader.style.display = 'none'; 
 
     } catch (e) {
         loader.style.display = 'none';
@@ -679,7 +712,7 @@ window.toggleHistoryDetails = function(id) {
     }
 };
 
-// --- ВКЛАДКА ІСТОРІЇ (ОНОВЛЕНО ГРУПУВАННЯ) ---
+// --- ВКЛАДКА ІСТОРІЇ ---
 function renderHistoryTab() {
     const container = document.getElementById('history-content');
     
@@ -854,7 +887,8 @@ function renderArbitrageGrid(arbData) {
             item.cleanSymbol, item.spreadPct, 
             item.buyEx, { symbol: item.buySymbol, ask: item.buyPrice, rate: item.buyRate, vol: item.buyVol }, 
             item.sellEx, { symbol: item.sellSymbol, bid: item.sellPrice, rate: item.sellRate, vol: item.sellVol },
-            false
+            false,
+            item.typeTag // Передаємо бейдж
         );
     });
     grid.innerHTML = html;
@@ -872,18 +906,23 @@ window.toggleMute = function(cleanSymbol) {
     }
 };
 
-function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, isWatchlist) {
+function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, isWatchlist, passedTypeTag = null) {
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
     
-    // ФІКС ЗНАКІВ ФАНДІНГУ: позитивний = зелений, негативний = червоний
+    // Визначаємо тип угоди (Спот чи Ф'ючерс), якщо не передано напряму
+    let typeTag = passedTypeTag || 'FUT ↔ FUT';
+    if (!passedTypeTag) {
+        if (buyEx.endsWith(' Spot') && !sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
+        else if (!buyEx.endsWith(' Spot') && sellEx.endsWith(' Spot')) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
+        else if (buyEx.endsWith(' Spot') && sellEx.endsWith(' Spot')) typeTag = 'SPOT ↔ SPOT';
+    }
+
     const bR = buyData.rate * 100; 
-    const bRStr = (bR > 0 ? '+' : '') + bR.toFixed(4) + '%'; 
-    const bRCol = bR > 0 ? '#00d67c' : '#e74c3c'; 
+    const bRStrHTML = buyEx.endsWith(' Spot') ? `<span style="color:#848e9c;">Спот (немає фандінгу)</span>` : `Фандінг: <span style="color: ${bR > 0 ? '#00d67c' : '#e74c3c'}; font-weight: bold;">${(bR > 0 ? '+' : '') + bR.toFixed(4)}%</span>`;
 
     const sR = sellData.rate * 100; 
-    const sRStr = (sR > 0 ? '+' : '') + sR.toFixed(4) + '%'; 
-    const sRCol = sR > 0 ? '#00d67c' : '#e74c3c';
+    const sRStrHTML = sellEx.endsWith(' Spot') ? `<span style="color:#848e9c;">Спот (немає фандінгу)</span>` : `Фандінг: <span style="color: ${sR > 0 ? '#00d67c' : '#e74c3c'}; font-weight: bold;">${(sR > 0 ? '+' : '') + sR.toFixed(4)}%</span>`;
 
     const bLink = getLinks(buyEx, buyData.symbol, cleanSymbol).fUrl;
     const sLink = getLinks(sellEx, sellData.symbol, cleanSymbol).fUrl;
@@ -899,7 +938,6 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
         iconSvg = `<svg class="icon-action eye-icon-${cleanSymbol}" style="fill:${eyeColor};" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}','${buyEx}','${sellEx}')"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`;
     }
 
-    // Іконка дзвіночка для вочліста
     const bellIcon = `
         <svg class="icon-action" style="fill: ${isMuted ? '#e74c3c' : '#f0b90b'}; margin-left: 8px;" 
              viewBox="0 0 24 24" onclick="toggleMute('${cleanSymbol}')" title="${isMuted ? 'Увімкнути звук' : 'Вимкнути звук'}">
@@ -928,8 +966,9 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                     </div>
                     <span class="vol-badge" style="width: max-content;">Vol: ${formatCurrency(maxVol)}</span>
                 </div>
-                <div class="arb-spread-box">
-                    <div style="font-size: 0.75em; color: #848e9c;">Спред Ціни:</div>
+                <div class="arb-spread-box" style="position:relative;">
+                    <div style="position:absolute; top:-12px; left:50%; transform:translateX(-50%); background:#2b3139; color:#f0b90b; font-size:0.7em; padding:2px 8px; border-radius:4px; white-space:nowrap; border: 1px solid #f0b90b; font-weight:bold;">${typeTag}</div>
+                    <div style="font-size: 0.75em; color: #848e9c; margin-top:6px;">Спред Ціни:</div>
                     <div class="arb-spread-val">${sStr}</div>
                     ${avgSpreadHtml}
                 </div>
@@ -938,8 +977,8 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                 <div class="arb-trade-box arb-buy">
                     <div class="arb-trade-box-left">
                         <div class="arb-trade-label" title="🟢 Купити (Лонг) на (Ask):">🟢 Купити (Лонг) на (Ask):</div>
-                        <div class="arb-ex-name">${buyEx}</div>
-                        <div class="arb-funding-text">Фандінг: <span style="color: ${bRCol}; font-weight: bold;">${bRStr}</span></div>
+                        <div class="arb-ex-name">${buyEx.replace(' Spot', '')} ${buyEx.endsWith(' Spot') ? '<span style="color:#f0b90b;font-size:0.8em;">(Spot)</span>' : ''}</div>
+                        <div class="arb-funding-text">${bRStrHTML}</div>
                     </div>
                     <div class="arb-trade-box-right">
                         <div class="arb-price green">$${buyData.ask || buyData.bid}</div>
@@ -949,8 +988,8 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                 <div class="arb-trade-box arb-sell">
                     <div class="arb-trade-box-left">
                         <div class="arb-trade-label" title="🔴 Продати (Шорт) на (Bid):">🔴 Продати (Шорт) на (Bid):</div>
-                        <div class="arb-ex-name">${sellEx}</div>
-                        <div class="arb-funding-text">Фандінг: <span style="color: ${sRCol}; font-weight: bold;">${sRStr}</span></div>
+                        <div class="arb-ex-name">${sellEx.replace(' Spot', '')} ${sellEx.endsWith(' Spot') ? '<span style="color:#f0b90b;font-size:0.8em;">(Spot)</span>' : ''}</div>
+                        <div class="arb-funding-text">${sRStrHTML}</div>
                     </div>
                     <div class="arb-trade-box-right">
                         <div class="arb-price red">$${sellData.bid || sellData.ask}</div>
@@ -985,25 +1024,38 @@ window.openChartWindow = function(symbol, ex1, ex2) {
     shell.openExternal(`http://localhost:${chartPort}/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}`);
 };
 
-async function getKlineData(ex, sym) {
+async function getKlineData(exName, sym) {
     try {
-        if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-        if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-        if(ex==='MEXC') { 
-            const r = await axios.get(`https://contract.mexc.com/api/v1/contract/kline/${sym.replace('USDT','_USDT')}?interval=Min1`);
-            const d = r.data.data;
-            let arr = [];
-            for(let i=0; i<d.time.length; i++) {
-                arr.push({ time: d.time[i] * 1000, close: parseFloat(d.close[i]) });
+        const isSpot = exName.endsWith(' Spot');
+        const ex = exName.replace(' Spot', '');
+        
+        if (isSpot) {
+            if(ex==='Binance') return (await axios.get(`https://api.binance.com/api/v3/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=spot&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            if(ex==='MEXC') return (await axios.get(`https://api.mexc.com/api/v3/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            if(ex==='Gate.io') return (await axios.get(`https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${sym.replace('USDT','_USDT')}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0])*1000,close:parseFloat(k[2])}));
+            if(ex==='Bitget') return (await axios.get(`https://api.bitget.com/api/v2/spot/market/candles?symbol=${sym}&granularity=1min&limit=720`)).data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+        } else {
+            if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/klines?symbol=${sym}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=1&limit=720`)).data.result.list.reverse().map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
+            if(ex==='MEXC') { 
+                const r = await axios.get(`https://contract.mexc.com/api/v1/contract/kline/${sym.replace('USDT','_USDT')}?interval=Min1`);
+                const d = r.data.data;
+                let arr = [];
+                for(let i=0; i<d.time.length; i++) {
+                    arr.push({ time: d.time[i] * 1000, close: parseFloat(d.close[i]) });
+                }
+                return arr.slice(-720);
             }
-            return arr.slice(-720);
+            if(ex==='Gate.io') return (await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${sym.replace('USDT','_USDT')}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k.t)*1000,close:parseFloat(k.c)}));
+            if(ex==='Bitget') return (await axios.get(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=1m&limit=720`)).data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
         }
-        if(ex==='Gate.io') return (await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${sym.replace('USDT','_USDT')}&interval=1m&limit=720`)).data.map(k=>({time:parseInt(k.t)*1000,close:parseFloat(k.c)}));
-        if(ex==='Bitget') return (await axios.get(`https://api.bitget.com/api/v2/mix/market/candles?symbol=${sym}&productType=USDT-FUTURES&granularity=1m&limit=720`)).data.data.map(k=>({time:parseInt(k[0]),close:parseFloat(k[4])}));
-    } catch(e) { console.log(`Kline error ${ex}:`, e.message); } return [];
+    } catch(e) { console.log(`Kline error ${exName}:`, e.message); } return [];
 }
 
-async function getFundingHistory(ex, sym) {
+async function getFundingHistory(exName, sym) {
+    if (exName.endsWith(' Spot')) return []; // Спот не має фандінгу
+    const ex = exName.replace(' Spot', '');
     try {
         if(ex==='Binance') return (await axios.get(`https://fapi.binance.com/fapi/v1/fundingRate?symbol=${sym}&limit=40`)).data.map(i=>({time:parseInt(i.fundingTime),rate:parseFloat(i.fundingRate)}));
         if(ex==='Bybit') return (await axios.get(`https://api.bybit.com/v5/market/funding/history?category=linear&symbol=${sym}&limit=40`)).data.result.list.map(i=>({time:parseInt(i.fundingRateTimestamp),rate:parseFloat(i.fundingRate)}));
@@ -1044,7 +1096,7 @@ async function generateChartPage(symbol, ex1, ex2, res) {
                     if (f.time >= timestamps[0] && f.time <= timestamps[timestamps.length - 1]) {
                         let cIdx = 0, mD = Infinity;
                         timestamps.forEach((t, i) => { if(Math.abs(t-f.time)<mD) {mD=Math.abs(t-f.time); cIdx=i;} });
-                        let col = f.rate > 0 ? 'rgba(231, 76, 60, 0.9)' : 'rgba(0, 214, 124, 0.9)';
+                        let col = f.rate > 0 ? 'rgba(0, 214, 124, 0.9)' : 'rgba(231, 76, 60, 0.9)'; // ФІКС: Плюсовий зелений
                         annotationsObj[`f_${name}_${idx}`] = { type: 'line', xMin: cIdx, xMax: cIdx, borderColor: col, borderWidth: 2, borderDash: [4, 4], label: { display: true, content: `💰 Фандінг (${name}): ${(f.rate * 100).toFixed(4)}%`, position: pos, backgroundColor: col, color: 'white', font: { size: 10 }, yAdjust: off > 0 ? off + (idx % 3) * 18 : off - (idx % 3) * 18 } };
                     }
                 });
@@ -1216,11 +1268,16 @@ window.processWatchlist = function() {
                 }
             }
 
+            let typeTag = 'FUT ↔ FUT';
+            if (item.buyEx.endsWith(' Spot') && !item.sellEx.endsWith(' Spot')) typeTag = 'SPOT 🟢 ↔ FUT 🔴';
+            else if (!item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'FUT 🟢 ↔ SPOT 🔴';
+            else if (item.buyEx.endsWith(' Spot') && item.sellEx.endsWith(' Spot')) typeTag = 'SPOT ↔ SPOT';
+
             html += generateArbCardHtml(
                 item.cleanSymbol, spread,
                 item.buyEx, { symbol: bData.symbol, ask: bData.ask, rate: bData.rate, vol: bData.vol },
                 item.sellEx, { symbol: sData.symbol, bid: sData.bid, rate: sData.rate, vol: sData.vol },
-                true 
+                true, typeTag 
             );
         } else {
             html += `

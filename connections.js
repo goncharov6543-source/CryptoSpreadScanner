@@ -34,7 +34,6 @@ async function fetchBalances(apiKeys) {
                         headers: { 'ApiKey': key, 'Request-Time': tsFut, 'Signature': sigFut, 'Content-Type': 'application/json' }
                     });
                     const usdtFut = resFut.data.data.find(a => a.currency === 'USDT');
-                    // MEXC: Використовуємо available + frozen
                     if (usdtFut) balance += parseFloat(usdtFut.availableBalance || 0) + parseFloat(usdtFut.frozenBalance || 0);
                     isSuccess = true;
                 } catch(e) { 
@@ -54,7 +53,6 @@ async function fetchBalances(apiKeys) {
                     const resFut = await axios.get(`https://api.gateio.ws${urlPathFut}`, {
                         headers: { 'KEY': key, 'Timestamp': ts, 'SIGN': sigFut, 'Accept': 'application/json' }
                     });
-                    // ФІКС GATE.IO: Тепер до балансу гаманця додається плаваючий PNL
                     balance += parseFloat(resFut.data.total || 0) + parseFloat(resFut.data.unrealised_pnl || 0);
                     isSuccess = true;
                 } catch(e) { errMessage = e.response?.data?.message || "Помилка Gate.io Futures"; }
@@ -90,7 +88,6 @@ async function fetchBalances(apiKeys) {
                 try {
                     const resFut = await axios.get(`https://fapi.binance.com/fapi/v2/balance?${q}&signature=${sig}`, { headers: { 'X-MBX-APIKEY': key } });
                     const uF = resFut.data.find(a => a.asset === 'USDT');
-                    // ФІКС BINANCE: Тепер включає Unrealized PNL
                     if(uF) balance += parseFloat(uF.balance) + parseFloat(uF.crossUnPnl || 0);
                     isSuccess = true;
                 } catch(e) { if(!isSuccess) errMessage = e.response?.data?.msg || "Помилка Binance"; }
@@ -105,7 +102,6 @@ async function fetchBalances(apiKeys) {
                         headers: { 'X-BAPI-API-KEY': key, 'X-BAPI-TIMESTAMP': ts, 'X-BAPI-SIGN': sig, 'X-BAPI-RECV-WINDOW': '5000' }
                     });
                     if (res.data.retCode === 0 && res.data.result.list.length > 0) {
-                        // Bybit вже віддає totalEquity, що є правильним
                         balance += parseFloat(res.data.result.list[0].totalEquity || 0);
                         isSuccess = true;
                     } else { throw new Error(res.data.retMsg); }
@@ -152,11 +148,12 @@ async function fetchPositions(apiKeys) {
                 res.data.forEach(p => {
                     const posAmt = parseFloat(p.positionAmt);
                     if (posAmt !== 0) {
+                        const markPrice = parseFloat(p.markPrice);
                         allPositions.push({
                             exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
                             side: posAmt > 0 ? 'Long' : 'Short',
-                            sizeUSDT: Math.abs(posAmt) * parseFloat(p.markPrice), 
-                            sizeTokens: Math.abs(posAmt), // ДОДАНО
+                            sizeUSDT: Math.abs(posAmt) * markPrice, 
+                            sizeTokens: Math.abs(posAmt), 
                             leverage: parseInt(p.leverage),
                             entryPrice: parseFloat(p.entryPrice),
                             unRealized: parseFloat(p.unRealizedProfit),
@@ -181,7 +178,7 @@ async function fetchPositions(apiKeys) {
                                 exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
                                 side: p.side === 'Buy' ? 'Long' : 'Short',
                                 sizeUSDT: parseFloat(p.positionValue),
-                                sizeTokens: Math.abs(size), // ДОДАНО
+                                sizeTokens: Math.abs(size), 
                                 leverage: parseInt(p.leverage),
                                 entryPrice: parseFloat(p.avgPrice),
                                 unRealized: parseFloat(p.unrealisedPnl),
@@ -201,13 +198,16 @@ async function fetchPositions(apiKeys) {
                 if(res.data && res.data.data) {
                     res.data.data.forEach(p => {
                         if (p.holdVol > 0) {
+                            // ФІКС РОЗМІРУ: Розмір = Початкова маржа * Плече
+                            const posValue = parseFloat(p.im) * parseInt(p.leverage);
+                            const entryPrice = parseFloat(p.holdAvgPrice);
                             allPositions.push({
                                 exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol.replace('_', ''),
                                 side: p.positionType === 1 ? 'Long' : 'Short',
-                                sizeUSDT: parseFloat(p.holdVol) * parseFloat(p.holdAvgPrice), 
-                                sizeTokens: parseFloat(p.holdVol), // ДОДАНО
+                                sizeUSDT: posValue, 
+                                sizeTokens: posValue / entryPrice, 
                                 leverage: parseInt(p.leverage),
-                                entryPrice: parseFloat(p.holdAvgPrice),
+                                entryPrice: entryPrice,
                                 unRealized: parseFloat(p.unrealised),
                                 realized: parseFloat(p.realised)
                             });
@@ -227,14 +227,25 @@ async function fetchPositions(apiKeys) {
                 res.data.forEach(p => {
                     const size = parseFloat(p.size);
                     if (size !== 0) {
+                        const posValue = parseFloat(p.value);
+                        const entryPrice = parseFloat(p.entry_price);
+                        const markPrice = parseFloat(p.mark_price);
+                        const side = size > 0 ? 'Long' : 'Short';
+                        const sizeCoins = posValue / entryPrice;
+                        
+                        // ФІКС PNL: Ручний прорахунок нереалізованого PNL для Gate.io
+                        const manualUnrealized = side === 'Long' 
+                            ? (markPrice - entryPrice) * sizeCoins 
+                            : (entryPrice - markPrice) * sizeCoins;
+
                         allPositions.push({
                             exchange: ex, symbol: p.contract, cleanSymbol: p.contract.replace('_', ''),
-                            side: size > 0 ? 'Long' : 'Short',
-                            sizeUSDT: Math.abs(size) * parseFloat(p.entry_price), 
-                            sizeTokens: Math.abs(size), // ДОДАНО
+                            side: side,
+                            sizeUSDT: posValue, 
+                            sizeTokens: sizeCoins, 
                             leverage: parseInt(p.leverage) || 0,
-                            entryPrice: parseFloat(p.entry_price),
-                            unRealized: parseFloat(p.unrealised_pnl),
+                            entryPrice: entryPrice,
+                            unRealized: manualUnrealized, 
                             realized: parseFloat(p.realised_pnl)
                         });
                     }

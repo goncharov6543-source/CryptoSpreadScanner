@@ -148,15 +148,17 @@ async function fetchPositions(apiKeys) {
                 res.data.forEach(p => {
                     const posAmt = parseFloat(p.positionAmt);
                     if (posAmt !== 0) {
-                        const markPrice = parseFloat(p.markPrice);
+                        const entryPrice = parseFloat(p.entryPrice);
+                        const sizeTokens = Math.abs(posAmt);
+                        const sizeUSDT = sizeTokens * entryPrice; // ФІКС: Сума = Монети * Вхідна ціна
                         allPositions.push({
                             exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
                             side: posAmt > 0 ? 'Long' : 'Short',
-                            sizeUSDT: Math.abs(posAmt) * markPrice, 
-                            sizeTokens: Math.abs(posAmt), 
+                            sizeUSDT: sizeUSDT, 
+                            sizeTokens: sizeTokens, 
                             leverage: parseInt(p.leverage),
-                            entryPrice: parseFloat(p.entryPrice),
-                            unRealized: parseFloat(p.unRealizedProfit),
+                            entryPrice: entryPrice,
+                            unRealized: parseFloat(p.unRealizedProfit || 0),
                             realized: 0 
                         });
                     }
@@ -174,15 +176,18 @@ async function fetchPositions(apiKeys) {
                     res.data.result.list.forEach(p => {
                         const size = parseFloat(p.size);
                         if (size !== 0) {
+                            const entryPrice = parseFloat(p.avgPrice);
+                            const sizeTokens = Math.abs(size);
+                            const sizeUSDT = sizeTokens * entryPrice; // ФІКС: Сума = Монети * Вхідна ціна
                             allPositions.push({
                                 exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
                                 side: p.side === 'Buy' ? 'Long' : 'Short',
-                                sizeUSDT: parseFloat(p.positionValue),
-                                sizeTokens: Math.abs(size), 
+                                sizeUSDT: sizeUSDT,
+                                sizeTokens: sizeTokens, 
                                 leverage: parseInt(p.leverage),
-                                entryPrice: parseFloat(p.avgPrice),
-                                unRealized: parseFloat(p.unrealisedPnl),
-                                realized: parseFloat(p.cumRealisedPnl)
+                                entryPrice: entryPrice,
+                                unRealized: parseFloat(p.unrealisedPnl || 0),
+                                realized: parseFloat(p.cumRealisedPnl || 0)
                             });
                         }
                     });
@@ -197,19 +202,19 @@ async function fetchPositions(apiKeys) {
                 
                 if(res.data && res.data.data) {
                     res.data.data.forEach(p => {
-                        if (p.holdVol > 0) {
-                            // ФІКС РОЗМІРУ: Розмір = Початкова маржа * Плече
-                            const posValue = parseFloat(p.im) * parseInt(p.leverage);
+                        if (parseFloat(p.holdVol) > 0) {
                             const entryPrice = parseFloat(p.holdAvgPrice);
+                            const sizeTokens = parseFloat(p.holdVol);
+                            const sizeUSDT = sizeTokens * entryPrice; // ФІКС: Сума = Монети * Вхідна ціна
                             allPositions.push({
                                 exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol.replace('_', ''),
                                 side: p.positionType === 1 ? 'Long' : 'Short',
-                                sizeUSDT: posValue, 
-                                sizeTokens: posValue / entryPrice, 
+                                sizeUSDT: sizeUSDT, 
+                                sizeTokens: sizeTokens, 
                                 leverage: parseInt(p.leverage),
                                 entryPrice: entryPrice,
-                                unRealized: parseFloat(p.unrealised),
-                                realized: parseFloat(p.realised)
+                                unRealized: parseFloat(p.unrealised || 0),
+                                realized: parseFloat(p.realised || 0)
                             });
                         }
                     });
@@ -227,26 +232,21 @@ async function fetchPositions(apiKeys) {
                 res.data.forEach(p => {
                     const size = parseFloat(p.size);
                     if (size !== 0) {
-                        const posValue = parseFloat(p.value);
                         const entryPrice = parseFloat(p.entry_price);
-                        const markPrice = parseFloat(p.mark_price);
-                        const side = size > 0 ? 'Long' : 'Short';
-                        const sizeCoins = posValue / entryPrice;
-                        
-                        // ФІКС PNL: Ручний прорахунок нереалізованого PNL для Gate.io
-                        const manualUnrealized = side === 'Long' 
-                            ? (markPrice - entryPrice) * sizeCoins 
-                            : (entryPrice - markPrice) * sizeCoins;
+                        const posValue = parseFloat(p.value); 
+                        // ФІКС: Безпечний розрахунок для Gate.io
+                        const sizeUSDT = !isNaN(posValue) ? posValue : (Math.abs(size) * entryPrice);
+                        const sizeTokens = sizeUSDT / entryPrice; 
 
                         allPositions.push({
                             exchange: ex, symbol: p.contract, cleanSymbol: p.contract.replace('_', ''),
-                            side: side,
-                            sizeUSDT: posValue, 
-                            sizeTokens: sizeCoins, 
+                            side: size > 0 ? 'Long' : 'Short',
+                            sizeUSDT: sizeUSDT, 
+                            sizeTokens: sizeTokens, 
                             leverage: parseInt(p.leverage) || 0,
                             entryPrice: entryPrice,
-                            unRealized: manualUnrealized, 
-                            realized: parseFloat(p.realised_pnl)
+                            unRealized: parseFloat(p.unrealised_pnl) || 0, // ФІКС: Відкат до офіційного PNL з біржі!
+                            realized: parseFloat(p.realised_pnl) || 0
                         });
                     }
                 });

@@ -15,7 +15,7 @@ let patternStats = {};
 let alertedCoins = new Set();
 let lastKnownPositions = {}; 
 let lastAnomalyAlerts = {};  
-let currentSidebarTab = 'WL'; // ФІКС: Змінна для відстеження вкладок WL / BL
+let currentSidebarTab = 'WL'; 
 
 // --- НАЛАШТУВАННЯ ТА ЗБЕРЕЖЕННЯ (Persistence) ---
 let settings = {
@@ -26,8 +26,8 @@ let settings = {
     soundFile: '',
     soundVolume: 50,
     watchlist: [], 
-    blacklist: [], // ФІКС: Блекліст
-    pairFilter: 'ALL', // ФІКС: Збереження вибору типу пари
+    blacklist: [], 
+    pairFilter: 'ALL', 
     apiKeys: {},
     balanceHistory: [],
     minimizeToTray: false,
@@ -351,7 +351,7 @@ window.saveFiltersAndUpdate = function() {
     settings.minVol = parseInt(document.getElementById('min-vol').value) || 0;
     settings.maxVol = parseInt(document.getElementById('max-vol').value) || 999999;
     settings.alertSpread = parseFloat(document.getElementById('alert-spread').value) || 999;
-    settings.pairFilter = document.getElementById('pair-type-filter').value || 'ALL'; // ФІКС: Збереження фільтру
+    settings.pairFilter = document.getElementById('pair-type-filter').value || 'ALL'; 
     saveSettingsToLocal();
     window.forceUpdate();
 };
@@ -465,7 +465,7 @@ async function fetchMarketData() {
         await Promise.all([...spotPromises, ...futuresPromises]);
         globalCrossData = crossData;
 
-        if(!settings.blacklist) settings.blacklist = []; // Ініціалізація блекліста
+        if(!settings.blacklist) settings.blacklist = []; 
 
         let positiveFunding = [], negativeFunding = [], priceArbOpps = [];
 
@@ -496,7 +496,6 @@ async function fetchMarketData() {
 
                         if (ex1.vol < minLim || ex1.vol > maxLim || ex2.vol < minLim || ex2.vol > maxLim) continue;
                         
-                        // ФІКС 2: Не можна шортити спот (ex2 має бути ф'ючерс), і не порівнюємо Спот зі Спотом
                         if (ex2.isSpot) continue; 
                         if (ex1.isSpot && ex2.isSpot) continue;
 
@@ -505,13 +504,10 @@ async function fetchMarketData() {
 
                         const spread = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
                         
-                        // ФІКС 2: Максимум 50% спреду
                         if (spread >= 0.15 && spread <= 50) {
                             
-                            // ФІКС 3: Пропускаємо заблоковані монети (Black List)
                             if (settings.blacklist.includes(cleanSymbol)) continue;
 
-                            // ФІКС 1: Фільтр типу пари
                             if (pairFilter === 'FUT' && typeTag !== 'FUT ↔ FUT') continue;
                             if (pairFilter === 'SPOT' && typeTag !== 'SPOT 🟢 ↔ FUT 🔴') continue;
 
@@ -522,7 +518,6 @@ async function fetchMarketData() {
                             });
 
                             if (document.getElementById('tab-2').classList.contains('active') && spread >= alertSpreadLimit) {
-                                // Перевірка чи монета в муті (через WL)
                                 const inWl = settings.watchlist.find(wl => wl.cleanSymbol === cleanSymbol);
                                 const isMuted = inWl ? inWl.isMuted : false;
                                 
@@ -906,13 +901,12 @@ function renderArbitrageGrid(arbData) {
             item.cleanSymbol, item.spreadPct, 
             item.buyEx, { symbol: item.buySymbol, ask: item.buyPrice, rate: item.buyRate, vol: item.buyVol }, 
             item.sellEx, { symbol: item.sellSymbol, bid: item.sellPrice, rate: item.sellRate, vol: item.sellVol },
-            'MAIN', item.typeTag // ФІКС 3: Передаємо контекст
+            'MAIN', item.typeTag 
         );
     });
     grid.innerHTML = html;
 }
 
-// Функції роботи зі звуком і блеклістом
 window.toggleMute = function(cleanSymbol) {
     const item = settings.watchlist.find(i => i.cleanSymbol === cleanSymbol);
     if (item) {
@@ -972,7 +966,6 @@ window.toggleWatchlist = function(cleanSymbol, buyEx, sellEx) {
 };
 
 
-// ФІКС 3: Оновлена генерація карток під різні контексти (MAIN, WL, BL)
 function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, listContext, passedTypeTag = null) {
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
@@ -996,7 +989,6 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     const isMuted = inWl ? inWl.isMuted : false;
     const inBl = settings.blacklist && settings.blacklist.includes(cleanSymbol);
 
-    // Іконки
     const eyeColor = inWl ? '#f0b90b' : '#848e9c';
     const eyeIcon = `<svg class="icon-action eye-icon-${cleanSymbol}" style="fill:${eyeColor};" viewBox="0 0 24 24" onclick="toggleWatchlist('${cleanSymbol}','${buyEx}','${sellEx}')" title="Додати/Видалити з Watch List"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>`;
 
@@ -1364,13 +1356,21 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
             .btn-time { background: #0b0e11; border: 1px solid #3c444f; color: #848e9c; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; margin-left: 10px;}
             .btn-time.active { background: #f0b90b; color: #000; border-color: #f0b90b; }
             .btn-time:hover:not(.active) { background: #2b3139; color: #fff; }
+            
+            /* ФІКС: Кнопка для фандінга */
+            .btn-funding { background: #1e2329; border: 1px solid #f0b90b; color: #f0b90b; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+            .btn-funding.active { background: #f0b90b; color: #000; }
+            
             #loader-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(30,35,41,0.9); z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 10px; }
         </style>
     </head>
     <body>
         <div class="header">
             <h2>📊 Історія спреду ${symbol} (${ex1} vs ${ex2})</h2>
-            <div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <button id="toggle-funding-btn" class="btn-funding active" onclick="toggleFunding()">💰 Фандінг (Увімкнено)</button>
+                <div style="width: 1px; height: 20px; background: #3c444f; margin: 0 5px;"></div>
+                
                 <button class="btn-time ${days==0.5 ? 'active':''}" onclick="window.location.href='/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=0.5'">12 Годин</button>
                 <button class="btn-time ${days==3 ? 'active':''}" onclick="window.location.href='/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=3'">3 Дні</button>
                 <button class="btn-time ${days==7 ? 'active':''}" onclick="window.location.href='/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=7'">7 Днів</button>
@@ -1388,6 +1388,9 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
         </div>
         
         <script>
+            let myChart = null;
+            let defaultAnnotations = {};
+            
             const evtSource = new EventSource('/stream-chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=${days}');
             evtSource.onmessage = function(e) {
                 const data = JSON.parse(e.data);
@@ -1442,9 +1445,11 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
                     };
                     addLines(f1, '${ex1}', 'start', 5); addLines(f2, '${ex2}', 'end', -5);
                 }
+                
+                defaultAnnotations = annotationsObj;
 
                 const ctx = document.getElementById('spreadChart').getContext('2d');
-                new Chart(ctx, {
+                myChart = new Chart(ctx, {
                     type: 'line',
                     data: { labels: labels, datasets: [{ label: 'Спред (%)', data: spreads, borderColor: '#f0b90b', backgroundColor: 'rgba(240, 185, 11, 0.1)', borderWidth: 2, fill: true, pointRadius: 0, pointHoverRadius: 6 }] },
                     options: { 
@@ -1454,7 +1459,7 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
                         interaction: { mode: 'index', intersect: false }, 
                         plugins: { 
                             tooltip: { callbacks: { title: c => c[0].label, afterLabel: c => ['Ціна ${ex1}: $' + rawPrices1[c.dataIndex], 'Ціна ${ex2}: $' + rawPrices2[c.dataIndex]] } }, 
-                            annotation: { clip: false, annotations: annotationsObj } 
+                            annotation: { clip: false, annotations: defaultAnnotations } 
                         }, 
                         scales: { 
                             y: { title: { display: true, text: 'Спред (%)', color: '#848e9c' }, grid: { color: '#2b3139' } }, 
@@ -1463,6 +1468,26 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
                         } 
                     }
                 });
+            }
+
+            // ФІКС: Логіка перемикання фандінгу
+            function toggleFunding() {
+                if (!myChart) return;
+                const btn = document.getElementById('toggle-funding-btn');
+                const currentAnns = myChart.options.plugins.annotation.annotations;
+                
+                if (Object.keys(currentAnns || {}).length > 0) {
+                    // Вимикаємо
+                    myChart.options.plugins.annotation.annotations = {};
+                    btn.classList.remove('active');
+                    btn.innerText = '💰 Фандінг (Вимкнено)';
+                } else {
+                    // Вмикаємо
+                    myChart.options.plugins.annotation.annotations = defaultAnnotations;
+                    btn.classList.add('active');
+                    btn.innerText = '💰 Фандінг (Увімкнено)';
+                }
+                myChart.update();
             }
         </script>
     </body>

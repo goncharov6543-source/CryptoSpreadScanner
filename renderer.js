@@ -145,7 +145,7 @@ function playAlert() {
     audioAlert.play().catch(e => {});
 }
 
-// --- БАЛАНСИ ТА РЕАЛЬНІ API ---
+// --- БАЛАНСИ ТА РЕАЛЬНІ API (ФІКС СУМАРНОГО БАЛАНСУ) ---
 async function updateBalancesUI() {
     const btn = document.getElementById('btn-ex-status');
     const drop = document.getElementById('ex-dropdown');
@@ -158,7 +158,62 @@ async function updateBalancesUI() {
         return;
     }
 
-    const result = await fetchBalances(settings.apiKeys);
+    const [result, currentPositions] = await Promise.all([
+        fetchBalances(settings.apiKeys),
+        fetchPositions(settings.apiKeys)
+    ]);
+
+    const hasOpenPositions = currentPositions.length > 0;
+
+    // --- БЕКГРАУНД ТРЕКІНГ ПОЗИЦІЙ ДЛЯ ІСТОРІЇ ---
+    const currentPosIds = new Set();
+    currentPositions.forEach(p => {
+        const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
+        currentPosIds.add(id);
+    });
+
+    let historyUpdated = false;
+    Object.keys(lastKnownPositions).forEach(id => {
+        if (!currentPosIds.has(id)) {
+            const closedPos = lastKnownPositions[id];
+            closedPos.closeDate = Date.now();
+            closedPos.finalPnl = (closedPos.unRealized || 0) + (closedPos.realized || 0);
+
+            if(!settings.positionHistory) settings.positionHistory = [];
+            settings.positionHistory.unshift(closedPos);
+            if(settings.positionHistory.length > 200) settings.positionHistory.pop();
+
+            delete settings.openDates[id];
+            historyUpdated = true;
+        }
+    });
+
+    lastKnownPositions = {};
+    currentPositions.forEach(p => {
+        const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
+        if(!settings.openDates) settings.openDates = {};
+        if(!settings.openDates[id]) {
+            settings.openDates[id] = Date.now();
+            historyUpdated = true;
+        }
+        p.openDate = settings.openDates[id];
+        lastKnownPositions[id] = p;
+    });
+
+    settings.savedPositions = lastKnownPositions;
+    if (historyUpdated) saveSettingsToLocal();
+
+    const posBadge = document.getElementById('pos-count-badge');
+    if (posBadge) {
+        if (currentPositions.length > 0) {
+            posBadge.innerText = currentPositions.length;
+            posBadge.style.display = 'inline-block';
+            posBadge.style.color = '#00d67c';
+        } else {
+            posBadge.style.display = 'none';
+        }
+    }
+    // ------------------------------------------
 
     let dropHtml = '';
     result.details.forEach(info => {
@@ -170,21 +225,26 @@ async function updateBalancesUI() {
     });
 
     drop.innerHTML = dropHtml;
-    totalBadge.innerHTML = `👤 $${result.total.toFixed(2)}`;
-    
+
     if(result.hasError) {
         btn.className = 'api-status-btn red';
     } else {
         btn.className = 'api-status-btn green';
     }
 
-    if (Object.keys(lastKnownPositions).length === 0) {
+    // ЛОГІКА ЗАМОРОЗКИ БАЛАНСУ
+    if (!hasOpenPositions) {
+        totalBadge.innerHTML = `👤 $${result.total.toFixed(2)}`;
+
         const lastRecord = settings.balanceHistory.length > 0 ? settings.balanceHistory[settings.balanceHistory.length - 1].total : null;
         if (lastRecord === null || Math.abs(lastRecord - result.total) > 0.01) {
             settings.balanceHistory.push({ time: Date.now(), total: result.total });
-            if (settings.balanceHistory.length > 1000) settings.balanceHistory.shift(); 
+            if (settings.balanceHistory.length > 1000) settings.balanceHistory.shift();
             saveSettingsToLocal();
         }
+    } else {
+        const lastRecord = settings.balanceHistory.length > 0 ? settings.balanceHistory[settings.balanceHistory.length - 1].total : result.total;
+        totalBadge.innerHTML = `👤 $${lastRecord.toFixed(2)} <span style="font-size:0.7em; color:#f0b90b; margin-left:6px;">(В угоді)</span>`;
     }
 }
 
@@ -278,18 +338,12 @@ window.switchTab = function(index) {
     document.querySelectorAll('.tab-content').forEach((content, i) => content.classList.toggle('active', i === index));
 
     const filterContainer = document.getElementById('filter-bar-container');
-    const alertGroup = document.getElementById('spread-alert-group');
-    const alertDivider = document.getElementById('alert-divider');
 
     if (index === 1) { 
         filterContainer.style.display = 'block';
-        if(alertGroup) alertGroup.style.display = 'none';
-        if(alertDivider) alertDivider.style.display = 'none';
         if(!isDataLoaded) fetchMarketData();
     } else if (index === 2) { 
         filterContainer.style.display = 'block';
-        if(alertGroup) alertGroup.style.display = 'flex';
-        if(alertDivider) alertDivider.style.display = 'block';
         if(!isDataLoaded) fetchMarketData();
     } else {
         filterContainer.style.display = 'none';
@@ -576,54 +630,6 @@ async function renderPositionsTab() {
 
     try {
         const posArray = await fetchPositions(settings.apiKeys);
-        
-        const badge = document.getElementById('pos-count-badge');
-        if (badge) {
-            if (posArray.length > 0) {
-                badge.innerText = posArray.length;
-                badge.style.display = 'inline-block';
-                badge.style.color = '#00d67c';
-            } else {
-                badge.style.display = 'none';
-            }
-        }
-        
-        const currentPosIds = new Set();
-        posArray.forEach(p => {
-            const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
-            currentPosIds.add(id);
-        });
-
-        Object.keys(lastKnownPositions).forEach(id => {
-            if (!currentPosIds.has(id)) {
-                const closedPos = lastKnownPositions[id];
-                closedPos.closeDate = Date.now();
-                closedPos.finalPnl = (closedPos.unRealized || 0) + (closedPos.realized || 0); 
-                
-                if(!settings.positionHistory) settings.positionHistory = [];
-                settings.positionHistory.unshift(closedPos); 
-                
-                if(settings.positionHistory.length > 200) settings.positionHistory.pop(); 
-                
-                delete settings.openDates[id];
-                saveSettingsToLocal();
-            }
-        });
-
-        lastKnownPositions = {};
-        posArray.forEach(p => {
-            const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
-            if(!settings.openDates) settings.openDates = {};
-            if(!settings.openDates[id]) {
-                settings.openDates[id] = Date.now(); 
-                saveSettingsToLocal();
-            }
-            p.openDate = settings.openDates[id];
-            lastKnownPositions[id] = p;
-        });
-        
-        settings.savedPositions = lastKnownPositions;
-        saveSettingsToLocal();
 
         if (posArray.length === 0) {
             loader.style.display = 'none';
@@ -640,7 +646,7 @@ async function renderPositionsTab() {
         let html = '';
         Object.keys(grouped).forEach(sym => {
             const arr = grouped[sym];
-            
+
             let exSides = [];
             let prices = [];
 
@@ -660,7 +666,7 @@ async function renderPositionsTab() {
             html += `
             <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
                 <div class="history-summary" style="grid-template-columns: 1.5fr 2fr 1fr; text-align: center;">
-                    
+
                     <div class="pos-col" style="text-align: left;">
                         <div class="pos-label">Монета</div>
                         <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
@@ -1133,7 +1139,7 @@ window.processSidebar = function() {
             if (exMap) {
                 let bestSpread = -1;
                 let bestBuy, bestSell;
-                let bestBuyName = '', bestSellName = ''; // ФІКС: Зберігаємо імена бірж
+                let bestBuyName = '', bestSellName = ''; 
                 let bestType = '';
                 
                 const exs = Object.keys(exMap);
@@ -1148,7 +1154,7 @@ window.processSidebar = function() {
                             bestSpread = sp; 
                             bestBuy = ex1; 
                             bestSell = ex2;
-                            bestBuyName = exs[i]; // ФІКС: Зберігаємо ключі
+                            bestBuyName = exs[i]; 
                             bestSellName = exs[j]; 
                             bestType = (ex1.isSpot && !ex2.isSpot) ? 'SPOT 🟢 ↔ FUT 🔴' : 'FUT ↔ FUT';
                         }
@@ -1158,7 +1164,7 @@ window.processSidebar = function() {
                 if (bestBuy && bestSell) {
                     html += generateArbCardHtml(
                         symbol, bestSpread,
-                        bestBuyName, { symbol: bestBuy.symbol, ask: bestBuy.ask, rate: bestBuy.rate, vol: bestBuy.vol }, // ФІКС: Передаємо збережені ключі
+                        bestBuyName, { symbol: bestBuy.symbol, ask: bestBuy.ask, rate: bestBuy.rate, vol: bestBuy.vol }, 
                         bestSellName, { symbol: bestSell.symbol, bid: bestSell.bid, rate: bestSell.rate, vol: bestSell.vol },
                         'BL', bestType 
                     );

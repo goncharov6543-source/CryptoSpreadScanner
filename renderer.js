@@ -559,7 +559,7 @@ async function fetchMarketData() {
     } catch (error) { document.getElementById('global-status').innerHTML = `🔴 OFFLINE`; }
 }
 
-// --- РЕНДЕР ВІДКРИТИХ ПОЗИЦІЙ ТА ІСТОРІЯ ---
+// --- РЕНДЕР ВІДКРИТИХ ПОЗИЦІЙ (СПРОЩЕНО) ---
 async function renderPositionsTab() {
     const loader = document.getElementById('pos-loader');
     const container = document.getElementById('pos-content');
@@ -641,19 +641,10 @@ async function renderPositionsTab() {
         Object.keys(grouped).forEach(sym => {
             const arr = grouped[sym];
             
-            let totalUnrealized = 0;
-            let totalRealized = 0;
-            let totalSize = 0;
-            let totalTokens = 0; 
             let exSides = [];
             let prices = [];
 
             arr.forEach(p => {
-                totalUnrealized += p.unRealized || 0;
-                totalRealized += p.realized || 0;
-                totalSize += p.sizeUSDT || 0;
-                totalTokens += p.sizeTokens || 0; 
-                
                 const col = p.side === 'Long' ? 'color:#00d67c;' : 'color:#e74c3c;';
                 exSides.push(`<span style="font-weight:bold;">${p.exchange}</span> (<span style="${col}">${p.side} ${p.leverage}x</span>)`);
                 prices.push(`$${p.entryPrice.toFixed(4)}`);
@@ -666,46 +657,27 @@ async function renderPositionsTab() {
                 spreadStr = (((maxP - minP) / minP) * 100).toFixed(2) + '%';
             }
 
-            const estProfit = totalUnrealized + totalRealized;
-            const pnlClass = estProfit >= 0 ? 'pnl-green' : 'pnl-red';
-            const sign = estProfit > 0 ? '+' : '';
-
+            // ФІКС: Спрощена карточка (3 колонки: Монета, Вхідна ціна, Спред)
             html += `
             <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
-                <div class="history-summary">
-                    <div class="pos-col">
+                <div class="history-summary" style="grid-template-columns: 1.5fr 2fr 1fr; text-align: center;">
+                    
+                    <div class="pos-col" style="text-align: left;">
                         <div class="pos-label">Монета</div>
                         <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
                         <div class="pos-subval" style="margin-top:4px;">${exSides.join(' / ')}</div>
                     </div>
-                    
-                    <div class="pos-col center">
-                        <div class="pos-label">Розмір</div>
-                        <div class="pos-value">${formatCurrency(totalSize)}</div>
-                        <div class="pos-subval" style="color:#f0b90b;">${totalTokens.toFixed(2)} шт.</div>
-                    </div>
 
                     <div class="pos-col center">
                         <div class="pos-label">Вхідна ціна</div>
-                        <div class="pos-value">${prices.join(' <span style="color:#848e9c;">/</span> ')}</div>
+                        <div class="pos-value" style="font-size: 1.2em;">${prices.join(' <span style="color:#848e9c;">/</span> ')}</div>
                     </div>
 
-                    <div class="pos-col center">
+                    <div class="pos-col right" style="text-align: right;">
                         <div class="pos-label">Спред входу</div>
-                        <div class="pos-value" style="color: #3498db; font-size: 1.2em;">${spreadStr}</div>
-                        <div class="pos-subval" style="margin-top:4px; font-size:0.75em;">
-                            <span class="${totalRealized >= 0 ? 'pnl-green' : 'pnl-red'}">${totalRealized >= 0 ? '+' : ''}$${totalRealized.toFixed(2)}</span>
-                            <span style="color:#848e9c; margin: 0 4px;">/</span>
-                            <span class="${totalUnrealized >= 0 ? 'pnl-green' : 'pnl-red'}">${totalUnrealized >= 0 ? '+' : ''}$${totalUnrealized.toFixed(2)}</span>
-                        </div>
+                        <div class="pos-value" style="color: #3498db; font-size: 1.3em;">${spreadStr}</div>
                     </div>
 
-                    <div class="pos-col right">
-                        <div class="pos-label">Загальний PNL</div>
-                        <div class="pos-total-pnl ${pnlClass}" style="display:inline-block;">
-                            ${sign}$${estProfit.toFixed(2)}
-                        </div>
-                    </div>
                 </div>
             </div>`;
         });
@@ -1357,7 +1329,6 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
             .btn-time.active { background: #f0b90b; color: #000; border-color: #f0b90b; }
             .btn-time:hover:not(.active) { background: #2b3139; color: #fff; }
             
-            /* ФІКС: Кнопка для фандінга */
             .btn-funding { background: #1e2329; border: 1px solid #f0b90b; color: #f0b90b; padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
             .btn-funding.active { background: #f0b90b; color: #000; }
             
@@ -1470,19 +1441,16 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
                 });
             }
 
-            // ФІКС: Логіка перемикання фандінгу
             function toggleFunding() {
                 if (!myChart) return;
                 const btn = document.getElementById('toggle-funding-btn');
                 const currentAnns = myChart.options.plugins.annotation.annotations;
                 
                 if (Object.keys(currentAnns || {}).length > 0) {
-                    // Вимикаємо
                     myChart.options.plugins.annotation.annotations = {};
                     btn.classList.remove('active');
                     btn.innerText = '💰 Фандінг (Вимкнено)';
                 } else {
-                    // Вмикаємо
                     myChart.options.plugins.annotation.annotations = defaultAnnotations;
                     btn.classList.add('active');
                     btn.innerText = '💰 Фандінг (Увімкнено)';

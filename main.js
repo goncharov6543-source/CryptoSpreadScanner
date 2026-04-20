@@ -24,7 +24,7 @@ function createWindow() {
 
     // Завантажуємо наш візуальний інтерфейс
     mainWindow.loadFile('index.html');
-    // mainWindow.webContents.openDevTools(); // Закоментуйте для фінального білду
+    mainWindow.webContents.openDevTools(); // Закоментуйте для фінального білду
 
     mainWindow.once('ready-to-show', () => {
         autoUpdater.checkForUpdatesAndNotify();

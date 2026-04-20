@@ -657,7 +657,6 @@ async function renderPositionsTab() {
                 spreadStr = (((maxP - minP) / minP) * 100).toFixed(2) + '%';
             }
 
-            // ФІКС: Спрощена карточка (3 колонки: Монета, Вхідна ціна, Спред)
             html += `
             <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
                 <div class="history-summary" style="grid-template-columns: 1.5fr 2fr 1fr; text-align: center;">
@@ -1134,6 +1133,7 @@ window.processSidebar = function() {
             if (exMap) {
                 let bestSpread = -1;
                 let bestBuy, bestSell;
+                let bestBuyName = '', bestSellName = ''; // ФІКС: Зберігаємо імена бірж
                 let bestType = '';
                 
                 const exs = Object.keys(exMap);
@@ -1145,7 +1145,11 @@ window.processSidebar = function() {
                         if (ex1.isSpot && ex2.isSpot) continue;
                         const sp = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
                         if (sp > bestSpread) {
-                            bestSpread = sp; bestBuy = ex1; bestSell = ex2;
+                            bestSpread = sp; 
+                            bestBuy = ex1; 
+                            bestSell = ex2;
+                            bestBuyName = exs[i]; // ФІКС: Зберігаємо ключі
+                            bestSellName = exs[j]; 
                             bestType = (ex1.isSpot && !ex2.isSpot) ? 'SPOT 🟢 ↔ FUT 🔴' : 'FUT ↔ FUT';
                         }
                     }
@@ -1154,8 +1158,8 @@ window.processSidebar = function() {
                 if (bestBuy && bestSell) {
                     html += generateArbCardHtml(
                         symbol, bestSpread,
-                        bestBuy.exchange, { symbol: bestBuy.symbol, ask: bestBuy.ask, rate: bestBuy.rate, vol: bestBuy.vol },
-                        bestSell.exchange, { symbol: bestSell.symbol, bid: bestSell.bid, rate: bestSell.rate, vol: bestSell.vol },
+                        bestBuyName, { symbol: bestBuy.symbol, ask: bestBuy.ask, rate: bestBuy.rate, vol: bestBuy.vol }, // ФІКС: Передаємо збережені ключі
+                        bestSellName, { symbol: bestSell.symbol, bid: bestSell.bid, rate: bestSell.rate, vol: bestSell.vol },
                         'BL', bestType 
                     );
                 } else {

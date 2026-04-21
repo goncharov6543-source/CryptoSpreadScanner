@@ -145,7 +145,7 @@ function playAlert() {
     audioAlert.play().catch(e => {});
 }
 
-// --- БАЛАНСИ ТА РЕАЛЬНІ API (ФІКС СУМАРНОГО БАЛАНСУ) ---
+// --- БАЛАНСИ ТА РЕАЛЬНІ API ---
 async function updateBalancesUI() {
     const btn = document.getElementById('btn-ex-status');
     const drop = document.getElementById('ex-dropdown');
@@ -165,7 +165,6 @@ async function updateBalancesUI() {
 
     const hasOpenPositions = currentPositions.length > 0;
 
-    // --- БЕКГРАУНД ТРЕКІНГ ПОЗИЦІЙ ДЛЯ ІСТОРІЇ ---
     const currentPosIds = new Set();
     currentPositions.forEach(p => {
         const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
@@ -213,7 +212,6 @@ async function updateBalancesUI() {
             posBadge.style.display = 'none';
         }
     }
-    // ------------------------------------------
 
     let dropHtml = '';
     result.details.forEach(info => {
@@ -232,7 +230,6 @@ async function updateBalancesUI() {
         btn.className = 'api-status-btn green';
     }
 
-    // ЛОГІКА ЗАМОРОЗКИ БАЛАНСУ
     if (!hasOpenPositions) {
         totalBadge.innerHTML = `👤 $${result.total.toFixed(2)}`;
 
@@ -646,7 +643,7 @@ async function renderPositionsTab() {
         let html = '';
         Object.keys(grouped).forEach(sym => {
             const arr = grouped[sym];
-
+            
             let exSides = [];
             let prices = [];
 
@@ -666,7 +663,7 @@ async function renderPositionsTab() {
             html += `
             <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
                 <div class="history-summary" style="grid-template-columns: 1.5fr 2fr 1fr; text-align: center;">
-
+                    
                     <div class="pos-col" style="text-align: left;">
                         <div class="pos-label">Монета</div>
                         <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
@@ -720,6 +717,7 @@ function renderHistoryTab() {
         let p1 = settings.positionHistory[i];
         let group = {
             cleanSymbol: p1.cleanSymbol,
+            openDate: p1.openDate || p1.closeDate, // Fallback для старих записів
             closeDate: p1.closeDate,
             sizeUSDT: p1.sizeUSDT || 0,
             finalPnl: p1.finalPnl,
@@ -733,6 +731,9 @@ function renderHistoryTab() {
                 group.legs.push(p2);
                 group.finalPnl += p2.finalPnl;
                 group.sizeUSDT += (p2.sizeUSDT || 0); 
+                if (p2.openDate && p2.openDate < group.openDate) {
+                    group.openDate = p2.openDate;
+                }
                 skipIndices.add(j);
             }
         }
@@ -745,6 +746,35 @@ function renderHistoryTab() {
         const sign = group.finalPnl > 0 ? '+' : '';
         
         const exchanges = group.legs.map(leg => leg.exchange).join(' / ');
+
+        const openDateStr = new Date(group.openDate).toLocaleString('uk-UA');
+        const closeDateStr = new Date(group.closeDate).toLocaleString('uk-UA');
+
+        let entrySpreadStr = '-';
+        let exitSpreadStr = '-';
+
+        if (group.legs.length >= 2) {
+            const l1 = group.legs[0];
+            const l2 = group.legs[1];
+
+            // Розрахунок спреду входу
+            const maxP = Math.max(l1.entryPrice, l2.entryPrice);
+            const minP = Math.min(l1.entryPrice, l2.entryPrice);
+            if (minP > 0) entrySpreadStr = (((maxP - minP) / minP) * 100).toFixed(2) + '%';
+
+            // Математичне виведення ціни закриття через PNL
+            const sz1 = l1.sizeTokens > 0 ? l1.sizeTokens : 1;
+            const sz2 = l2.sizeTokens > 0 ? l2.sizeTokens : 1;
+
+            const exitP1 = l1.side === 'Long' ? l1.entryPrice + (l1.finalPnl / sz1) : l1.entryPrice - (l1.finalPnl / sz1);
+            const exitP2 = l2.side === 'Long' ? l2.entryPrice + (l2.finalPnl / sz2) : l2.entryPrice - (l2.finalPnl / sz2);
+
+            const maxEP = Math.max(exitP1, exitP2);
+            const minEP = Math.min(exitP1, exitP2);
+            if (minEP > 0 && !isNaN(minEP)) {
+                exitSpreadStr = (((maxEP - minEP) / minEP) * 100).toFixed(2) + '%';
+            }
+        }
 
         let legsHtml = '';
         group.legs.forEach(leg => {
@@ -762,29 +792,27 @@ function renderHistoryTab() {
 
         html += `
         <div class="pos-card history-card" onclick="toggleHistoryDetails('details-hist-${idx}')">
-            <div class="history-summary">
+            <div class="history-summary" style="grid-template-columns: 1fr 1.5fr 1.5fr 1fr;">
                 <div class="pos-col">
-                    <div class="pos-label">Монета (Закрита)</div>
+                    <div class="pos-label">Монета</div>
                     <div class="pos-value" style="font-size: 1.2em;">${group.cleanSymbol}</div>
+                    <div class="pos-subval" style="margin-top:4px;">${exchanges}</div>
                 </div>
                 
                 <div class="pos-col center">
-                    <div class="pos-label">Сумарний Розмір</div>
-                    <div class="pos-value">${formatCurrency(group.sizeUSDT)}</div>
+                    <div class="pos-label">Час утримання</div>
+                    <div class="pos-subval">Вхід: <span style="color:#fff; font-weight:bold;">${openDateStr}</span></div>
+                    <div class="pos-subval" style="margin-top: 4px;">Вихід: <span style="color:#fff; font-weight:bold;">${closeDateStr}</span></div>
                 </div>
 
                 <div class="pos-col center">
-                    <div class="pos-label">Час закриття</div>
-                    <div class="pos-value">${new Date(group.closeDate).toLocaleString('uk-UA')}</div>
-                </div>
-                
-                <div class="pos-col center">
-                    <div class="pos-label">Біржі</div>
-                    <div class="pos-value" style="font-size: 0.9em;">${exchanges}</div>
+                    <div class="pos-label">Спред</div>
+                    <div class="pos-subval">Вхід: <span style="color:#3498db; font-weight:bold; font-size:1.1em;">${entrySpreadStr}</span></div>
+                    <div class="pos-subval" style="margin-top: 4px;">Вихід: <span style="color:#e74c3c; font-weight:bold; font-size:1.1em;">${exitSpreadStr}</span></div>
                 </div>
 
                 <div class="pos-col right">
-                    <div class="pos-label">Загальний PNL</div>
+                    <div class="pos-label">Фінальний PNL</div>
                     <div class="pos-total-pnl ${pnlClass}" style="display:inline-block;">
                         ${sign}$${group.finalPnl.toFixed(2)}
                     </div>

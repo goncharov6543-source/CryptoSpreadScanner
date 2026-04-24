@@ -663,7 +663,7 @@ async function renderPositionsTab() {
             html += `
             <div class="pos-card" style="padding: 0; overflow: hidden; cursor: default;">
                 <div class="history-summary" style="grid-template-columns: 1.5fr 2fr 1fr; text-align: center;">
-                    
+
                     <div class="pos-col" style="text-align: left;">
                         <div class="pos-label">Монета</div>
                         <div class="pos-value" style="font-size: 1.3em;">${sym}</div>
@@ -717,7 +717,7 @@ function renderHistoryTab() {
         let p1 = settings.positionHistory[i];
         let group = {
             cleanSymbol: p1.cleanSymbol,
-            openDate: p1.openDate || p1.closeDate, // Fallback для старих записів
+            openDate: p1.openDate || p1.closeDate, 
             closeDate: p1.closeDate,
             sizeUSDT: p1.sizeUSDT || 0,
             finalPnl: p1.finalPnl,
@@ -757,12 +757,10 @@ function renderHistoryTab() {
             const l1 = group.legs[0];
             const l2 = group.legs[1];
 
-            // Розрахунок спреду входу
             const maxP = Math.max(l1.entryPrice, l2.entryPrice);
             const minP = Math.min(l1.entryPrice, l2.entryPrice);
             if (minP > 0) entrySpreadStr = (((maxP - minP) / minP) * 100).toFixed(2) + '%';
 
-            // Математичне виведення ціни закриття через PNL
             const sz1 = l1.sizeTokens > 0 ? l1.sizeTokens : 1;
             const sz2 = l2.sizeTokens > 0 ? l2.sizeTokens : 1;
 
@@ -1488,10 +1486,16 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
                     myChart.options.plugins.annotation.annotations = {};
                     btn.classList.remove('active');
                     btn.innerText = '💰 Фандінг (Вимкнено)';
+                    btn.style.color = '#848e9c';
+                    btn.style.borderColor = '#3c444f';
+                    btn.style.background = '#0b0e11';
                 } else {
                     myChart.options.plugins.annotation.annotations = defaultAnnotations;
                     btn.classList.add('active');
                     btn.innerText = '💰 Фандінг (Увімкнено)';
+                    btn.style.color = '#000';
+                    btn.style.borderColor = '#f0b90b';
+                    btn.style.background = '#f0b90b';
                 }
                 myChart.update();
             }

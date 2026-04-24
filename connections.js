@@ -150,7 +150,7 @@ async function fetchPositions(apiKeys) {
                     if (posAmt !== 0) {
                         const entryPrice = parseFloat(p.entryPrice);
                         const sizeTokens = Math.abs(posAmt);
-                        const sizeUSDT = sizeTokens * entryPrice; // ФІКС: Сума = Монети * Вхідна ціна
+                        const sizeUSDT = sizeTokens * entryPrice; 
                         allPositions.push({
                             exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
                             side: posAmt > 0 ? 'Long' : 'Short',
@@ -178,7 +178,7 @@ async function fetchPositions(apiKeys) {
                         if (size !== 0) {
                             const entryPrice = parseFloat(p.avgPrice);
                             const sizeTokens = Math.abs(size);
-                            const sizeUSDT = sizeTokens * entryPrice; // ФІКС: Сума = Монети * Вхідна ціна
+                            const sizeUSDT = sizeTokens * entryPrice; 
                             allPositions.push({
                                 exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
                                 side: p.side === 'Buy' ? 'Long' : 'Short',
@@ -196,24 +196,42 @@ async function fetchPositions(apiKeys) {
             } else if (ex === 'MEXC') {
                 const ts = Date.now().toString();
                 const sig = crypto.createHmac('sha256', secret).update(key + ts).digest('hex');
-                const res = await axios.get('https://contract.mexc.com/api/v1/private/position/open_positions', {
-                    headers: { 'ApiKey': key, 'Request-Time': ts, 'Signature': sig, 'Content-Type': 'application/json' }
-                });
                 
-                if(res.data && res.data.data) {
-                    res.data.data.forEach(p => {
+                // ФІКС: Отримуємо тікери паралельно з позиціями, щоб прорахувати PNL
+                const [posRes, tickerRes] = await Promise.all([
+                    axios.get('https://contract.mexc.com/api/v1/private/position/open_positions', {
+                        headers: { 'ApiKey': key, 'Request-Time': ts, 'Signature': sig, 'Content-Type': 'application/json' }
+                    }).catch(e => { throw e; }),
+                    axios.get('https://contract.mexc.com/api/v1/contract/ticker').catch(() => ({ data: { data: [] } }))
+                ]);
+                
+                let mexcPrices = {};
+                if (tickerRes.data && tickerRes.data.data) {
+                    tickerRes.data.data.forEach(t => { mexcPrices[t.symbol] = parseFloat(t.lastPrice); });
+                }
+                
+                if(posRes.data && posRes.data.data) {
+                    posRes.data.data.forEach(p => {
                         if (parseFloat(p.holdVol) > 0) {
                             const entryPrice = parseFloat(p.holdAvgPrice);
                             const sizeTokens = parseFloat(p.holdVol);
-                            const sizeUSDT = sizeTokens * entryPrice; // ФІКС: Сума = Монети * Вхідна ціна
+                            const sizeUSDT = sizeTokens * entryPrice; 
+                            const side = p.positionType === 1 ? 'Long' : 'Short';
+                            
+                            // Ручний прорахунок PNL, бо MEXC його не віддає
+                            const currentPrice = mexcPrices[p.symbol] || entryPrice;
+                            const manualUnrealized = side === 'Long' 
+                                ? (currentPrice - entryPrice) * sizeTokens 
+                                : (entryPrice - currentPrice) * sizeTokens;
+
                             allPositions.push({
                                 exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol.replace('_', ''),
-                                side: p.positionType === 1 ? 'Long' : 'Short',
+                                side: side,
                                 sizeUSDT: sizeUSDT, 
                                 sizeTokens: sizeTokens, 
                                 leverage: parseInt(p.leverage),
                                 entryPrice: entryPrice,
-                                unRealized: parseFloat(p.unrealised || 0),
+                                unRealized: manualUnrealized,
                                 realized: parseFloat(p.realised || 0)
                             });
                         }
@@ -234,7 +252,6 @@ async function fetchPositions(apiKeys) {
                     if (size !== 0) {
                         const entryPrice = parseFloat(p.entry_price);
                         const posValue = parseFloat(p.value); 
-                        // ФІКС: Безпечний розрахунок для Gate.io
                         const sizeUSDT = !isNaN(posValue) ? posValue : (Math.abs(size) * entryPrice);
                         const sizeTokens = sizeUSDT / entryPrice; 
 
@@ -245,7 +262,7 @@ async function fetchPositions(apiKeys) {
                             sizeTokens: sizeTokens, 
                             leverage: parseInt(p.leverage) || 0,
                             entryPrice: entryPrice,
-                            unRealized: parseFloat(p.unrealised_pnl) || 0, // ФІКС: Відкат до офіційного PNL з біржі!
+                            unRealized: parseFloat(p.unrealised_pnl) || 0, 
                             realized: parseFloat(p.realised_pnl) || 0
                         });
                     }

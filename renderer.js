@@ -17,6 +17,13 @@ let lastKnownPositions = {};
 let lastAnomalyAlerts = {};  
 let currentSidebarTab = 'WL'; 
 
+// НОВІ ЗМІННІ ДЛЯ СТАТИСТИКИ ТА ПЕРЕВІРКИ
+let coinStats = {}; 
+let isLoadingStats = {};
+let consecutiveSpreads = {}; // Лічильник підтверджень спреду (від спайків)
+let isTop10Parsed = false;
+let globalFinalArb = [];
+
 // --- НАЛАШТУВАННЯ ТА ЗБЕРЕЖЕННЯ (Persistence) ---
 let settings = {
     activeExchanges: ['MEXC', 'Gate.io', 'Binance', 'Bybit', 'Bitget'],
@@ -342,6 +349,10 @@ window.switchTab = function(index) {
     } else if (index === 2) { 
         filterContainer.style.display = 'block';
         if(!isDataLoaded) fetchMarketData();
+
+        if (!isTop10Parsed && globalFinalArb && globalFinalArb.length > 0) {
+            fetchTop10Stats(globalFinalArb.slice(0, 10));
+        }
     } else {
         filterContainer.style.display = 'none';
     }
@@ -521,6 +532,7 @@ async function fetchMarketData() {
         let positiveFunding = [], negativeFunding = [], priceArbOpps = [];
 
         Object.keys(crossData).forEach(cleanSymbol => {
+            let hasValidSpread = false;
             const exMap = crossData[cleanSymbol];
             const exs = Object.keys(exMap);
             
@@ -556,33 +568,42 @@ async function fetchMarketData() {
                         const spread = ((ex2.bid - ex1.ask) / ex1.ask) * 100;
                         
                         if (spread >= 0.15 && spread <= 50) {
-                            
                             if (settings.blacklist.includes(cleanSymbol)) continue;
-
                             if (pairFilter === 'FUT' && typeTag !== 'FUT ↔ FUT') continue;
                             if (pairFilter === 'SPOT' && typeTag !== 'SPOT 🟢 ↔ FUT 🔴') continue;
 
-                            priceArbOpps.push({
-                                cleanSymbol, spreadPct: spread, typeTag: typeTag,
-                                buyEx: ex1N, buySymbol: ex1.symbol, buyPrice: ex1.ask, buyRate: ex1.rate, buyVol: ex1.vol,
-                                sellEx: ex2N, sellSymbol: ex2.symbol, sellPrice: ex2.bid, sellRate: ex2.rate, sellVol: ex2.vol
-                            });
+                            hasValidSpread = true;
 
-                            if (document.getElementById('tab-2').classList.contains('active') && spread >= alertSpreadLimit) {
-                                const inWl = settings.watchlist.find(wl => wl.cleanSymbol === cleanSymbol);
-                                const isMuted = inWl ? inWl.isMuted : false;
-                                
-                                if (!alertedCoins.has(cleanSymbol) && !isMuted) {
-                                    playAlert();
-                                    window.showToast(`🚨 ВИСОКИЙ СПРЕД: ${spread.toFixed(2)}%`, `Монета: <b>${cleanSymbol}</b><br>Купити: ${ex1N}<br>Продати: ${ex2N}`);
-                                    alertedCoins.add(cleanSymbol);
+                            // ЗАХИСТ ВІД СПАЙКІВ: пускаємо в список тільки після 3-го підтвердження (15 сек)
+                            if ((consecutiveSpreads[cleanSymbol] || 0) >= 2) {
+                                priceArbOpps.push({
+                                    cleanSymbol, spreadPct: spread, typeTag: typeTag,
+                                    buyEx: ex1N, buySymbol: ex1.symbol, buyPrice: ex1.ask, buyRate: ex1.rate, buyVol: ex1.vol,
+                                    sellEx: ex2N, sellSymbol: ex2.symbol, sellPrice: ex2.bid, sellRate: ex2.rate, sellVol: ex2.vol
+                                });
+
+                                if (document.getElementById('tab-2').classList.contains('active') && spread >= alertSpreadLimit) {
+                                    const inWl = settings.watchlist.find(wl => wl.cleanSymbol === cleanSymbol);
+                                    const isMuted = inWl ? inWl.isMuted : false;
+                                    
+                                    if (!alertedCoins.has(cleanSymbol) && !isMuted) {
+                                        playAlert();
+                                        window.showToast(`🚨 ВИСОКИЙ СПРЕД: ${spread.toFixed(2)}%`, `Монета: <b>${cleanSymbol}</b><br>Купити: ${ex1N}<br>Продати: ${ex2N}`);
+                                        alertedCoins.add(cleanSymbol);
+                                    }
+                                } else {
+                                    alertedCoins.delete(cleanSymbol); 
                                 }
-                            } else {
-                                alertedCoins.delete(cleanSymbol); 
                             }
                         }
                     }
                 }
+            }
+
+            if (hasValidSpread) {
+                consecutiveSpreads[cleanSymbol] = (consecutiveSpreads[cleanSymbol] || 0) + 1;
+            } else {
+                consecutiveSpreads[cleanSymbol] = 0;
             }
         });
         
@@ -600,6 +621,26 @@ async function fetchMarketData() {
         renderFundingGrids(positiveFunding.slice(0, 10), negativeFunding.slice(0, 10));
         renderArbitrageGrid(finalArb.slice(0, 20));
         if (typeof processSidebar === 'function') processSidebar(); 
+
+        if (document.getElementById('tab-2').classList.contains('active')) {
+            if (!isTop10Parsed && globalFinalArb.length > 0) {
+                fetchTop10Stats(globalFinalArb.slice(0, 10));
+            } else if (isTop10Parsed) {
+                renderArbitrageGrid(globalFinalArb.slice(0, 20));
+                
+                // Фонові дозавантаження для новачків у топ 10
+                globalFinalArb.slice(0, 10).forEach(item => {
+                    if (!coinStats[item.cleanSymbol] && !isLoadingStats[item.cleanSymbol]) {
+                        calculateCoinStats(item.cleanSymbol, item.buyEx, item.sellEx).then(() => {
+                            if (document.getElementById('tab-2').classList.contains('active')) {
+                                renderArbitrageGrid(globalFinalArb.slice(0, 20));
+                            }
+                        });
+                    }
+                });
+            }
+            if (typeof processSidebar === 'function') processSidebar(); 
+        }
         
         if(Object.keys(settings.apiKeys).length > 0) {
             updateBalancesUI();
@@ -1545,6 +1586,107 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
     }
 }
 
+// --- СИСТЕМА СТАТИСТИКИ ТА ПРОГРЕС-БАРУ ---
+
+async function fetchTop10Stats(top10Array) {
+    document.getElementById('top10-loader-modal').classList.add('active');
+    isTop10Parsed = true;
+    let done = 0;
+    
+    for (let item of top10Array) {
+        if (!coinStats[item.cleanSymbol] && !isLoadingStats[item.cleanSymbol]) {
+            await calculateCoinStats(item.cleanSymbol, item.buyEx, item.sellEx);
+            await new Promise(r => setTimeout(r, 400)); // Пауза щоб не зловити бан
+        }
+        done++;
+        document.getElementById('top10-progress-bar').style.width = (done / top10Array.length) * 100 + '%';
+        document.getElementById('top10-progress-text').innerText = `${done} / ${top10Array.length}`;
+    }
+    
+    setTimeout(() => {
+        document.getElementById('top10-loader-modal').classList.remove('active');
+        if (document.getElementById('tab-2').classList.contains('active')) {
+            renderArbitrageGrid(globalFinalArb.slice(0, 20));
+            processSidebar();
+        }
+    }, 500);
+}
+
+// Розрахунок історії (Z-Score)
+async function calculateCoinStats(symbol, buyEx, sellEx) {
+    isLoadingStats[symbol] = true;
+    try {
+        const [d1, d2] = await Promise.all([
+            getKlineDataChunked(buyEx, symbol, 720, () => {}),
+            getKlineDataChunked(sellEx, symbol, 720, () => {})
+        ]);
+        
+        if (!d1 || !d2 || d1.length < 60) { isLoadingStats[symbol] = false; return; }
+
+        const minLength = Math.min(d1.length, d2.length);
+        const s1 = d1.slice(-minLength);
+        const s2 = d2.slice(-minLength);
+
+        let spreads = [];
+        let sum = 0; let max = -Infinity; let min = Infinity;
+
+        for (let i = 0; i < minLength; i++) {
+            const sp = (((s2[i].close - s1[i].close) / s1[i].close) * 100);
+            spreads.push(sp);
+            sum += sp;
+            if (sp > max) max = sp;
+            if (sp < min) min = sp;
+        }
+
+        const avg = sum / minLength;
+        
+        // Розрахунок Standard Deviation (для Z-Score)
+        let sumSqDiff = 0;
+        for (let sp of spreads) {
+            sumSqDiff += Math.pow(sp - avg, 2);
+        }
+        const stdDev = Math.sqrt(sumSqDiff / minLength);
+
+        coinStats[symbol] = { avg, max, min, stdDev, buyEx, sellEx, history: spreads, isReady: true };
+    } catch(e) {}
+    isLoadingStats[symbol] = false;
+}
+
+// Легке оновлення (парсить тільки останні 2 свічки)
+async function updateCoinStatsLight(symbol) {
+    if (!coinStats[symbol] || !coinStats[symbol].history) return;
+    const stat = coinStats[symbol];
+    try {
+        const [d1, d2] = await Promise.all([
+            getKlineDataChunked(stat.buyEx, symbol, 2, () => {}),
+            getKlineDataChunked(stat.sellEx, symbol, 2, () => {})
+        ]);
+        if (d1.length > 0 && d2.length > 0) {
+            const p1 = d1[d1.length - 1].close;
+            const p2 = d2[d2.length - 1].close;
+            const sp = ((p2 - p1) / p1) * 100;
+            
+            // Додаємо новий спред, видаляємо найстаріший (FIFO)
+            stat.history.push(sp);
+            if (stat.history.length > 720) stat.history.shift();
+            
+            let sum = 0, max = -Infinity, min = Infinity;
+            for(let v of stat.history) {
+                sum += v;
+                if(v > max) max = v;
+                if(v < min) min = v;
+            }
+            stat.avg = sum / stat.history.length;
+            stat.max = max;
+            stat.min = min;
+            
+            let sumSqDiff = 0;
+            for (let v of stat.history) sumSqDiff += Math.pow(v - stat.avg, 2);
+            stat.stdDev = Math.sqrt(sumSqDiff / stat.history.length);
+        }
+    } catch(e) {}
+}
+
 // === ЛОГІКА ОНОВЛЕНЬ ===
 ipcRenderer.on('update_downloaded', () => {
     document.getElementById('update-banner').style.display = 'flex';
@@ -1554,6 +1696,7 @@ window.installUpdate = function() {
     ipcRenderer.send('restart_app');
 };
 
+// 1. Швидкий парсинг стаканів (раз на 5 секунд)
 setInterval(() => {
     const isAct1 = document.getElementById('tab-1').classList.contains('active');
     const isAct2 = document.getElementById('tab-2').classList.contains('active');
@@ -1563,4 +1706,22 @@ setInterval(() => {
     if ((isAct1 || isAct2) && !isModal) fetchMarketData();
     if (isAct0 && !isModal) renderPositionsTab();
 
-}, 15000);
+}, 5000); 
+
+// 2. Легке фонове оновлення статистики Z-Score (раз на хвилину)
+setInterval(async () => {
+    if (!isDataLoaded || !isTop10Parsed) return;
+    const symbols = Object.keys(coinStats);
+    for (let sym of symbols) {
+        const stat = coinStats[sym];
+        if (stat && !isLoadingStats[sym] && stat.isReady) {
+            try {
+                await updateCoinStatsLight(sym);
+            } catch(e) {}
+        }
+    }
+    if (document.getElementById('tab-2').classList.contains('active')) {
+        renderArbitrageGrid(globalFinalArb.slice(0, 20));
+        processSidebar();
+    }
+}, 60000);

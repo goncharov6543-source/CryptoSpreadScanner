@@ -197,6 +197,7 @@ async function fetchPositions(apiKeys) {
                 const ts = Date.now().toString();
                 const sig = crypto.createHmac('sha256', secret).update(key + ts).digest('hex');
                 
+                // ФІКС: Отримуємо тікери паралельно з позиціями, щоб прорахувати PNL
                 const [posRes, tickerRes] = await Promise.all([
                     axios.get('https://contract.mexc.com/api/v1/private/position/open_positions', {
                         headers: { 'ApiKey': key, 'Request-Time': ts, 'Signature': sig, 'Content-Type': 'application/json' }
@@ -217,6 +218,7 @@ async function fetchPositions(apiKeys) {
                             const sizeUSDT = sizeTokens * entryPrice; 
                             const side = p.positionType === 1 ? 'Long' : 'Short';
                             
+                            // Ручний прорахунок PNL, бо MEXC його не віддає
                             const currentPrice = mexcPrices[p.symbol] || entryPrice;
                             const manualUnrealized = side === 'Long' 
                                 ? (currentPrice - entryPrice) * sizeTokens 

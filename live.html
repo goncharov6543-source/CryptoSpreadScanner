@@ -15,8 +15,8 @@
         .btn-tf:hover:not(.active) { background: #2b3139; color: #fff; }
         .price-container { display: flex; gap: 30px; font-size: 1.3em; font-weight: bold; }
         .price-box { display: flex; align-items: center; gap: 8px; }
-        .price-ex1 { color: #00d67c; } /* Колір для Ex1 */
-        .price-ex2 { color: #2962FF; } /* Синій колір для Ex2, щоб не плутались свічки */
+        .price-ex1 { color: #00d67c; } 
+        .price-ex2 { color: #2962FF; } 
         #chart-container { flex: 1; width: 100%; position: relative; }
         .status-dot { width: 10px; height: 10px; background-color: #00d67c; border-radius: 50%; animation: blink 1.5s infinite; }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
@@ -27,9 +27,9 @@
         <div class="header-left">
             <h2 id="pair-title">Loading...</h2>
             <div class="timeframes">
-                <button class="btn-tf" onclick="setTimeframe(1)">1H</button>
-                <button class="btn-tf" onclick="setTimeframe(4)">4H</button>
-                <button class="btn-tf active" onclick="setTimeframe(12)">12H</button>
+                <button class="btn-tf" onclick="setTimeframe(1, this)">1H</button>
+                <button class="btn-tf active" onclick="setTimeframe(4, this)">4H</button>
+                <button class="btn-tf" onclick="setTimeframe(12, this)">12H</button>
             </div>
         </div>
         <div class="price-container">

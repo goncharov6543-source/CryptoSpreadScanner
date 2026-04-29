@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Live Позиція</title>
+    <!-- Підключаємо Lightweight Charts для швидких тікових графіків -->
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background-color: #0b0e11; color: #EAECEF; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; }
+        .header h2 { margin: 0; font-size: 1.2em; color: #f0b90b; }
+        .price-container { display: flex; gap: 30px; font-size: 1.3em; font-weight: bold; }
+        .price-box { display: flex; align-items: center; gap: 8px; }
+        .price-ex1 { color: #00d67c; }
+        .price-ex2 { color: #e74c3c; }
+        #chart-container { flex: 1; width: 100%; position: relative; }
+        .status-dot { width: 10px; height: 10px; background-color: #00d67c; border-radius: 50%; animation: blink 1.5s infinite; }
+        @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2 id="pair-title">Loading...</h2>
+        <div class="price-container">
+            <div class="price-box"><span id="name-ex1">Ex1</span> <span class="price-ex1" id="price-ex1">---</span></div>
+            <div class="price-box"><span id="name-ex2">Ex2</span> <span class="price-ex2" id="price-ex2">---</span></div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 0.9em; color: #848e9c;">
+            <div class="status-dot" id="ws-status-dot"></div> Live WebSockets
+        </div>
+    </div>
+    <div id="chart-container"></div>
+    <script src="live.js"></script>
+</body>
+</html>

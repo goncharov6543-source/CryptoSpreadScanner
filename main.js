@@ -106,3 +106,32 @@ ipcMain.on('restart_app', () => {
     isQuitting = true; // Дозволяємо програмі закритися, а не згорнутися в трей
     autoUpdater.quitAndInstall(); // Встановлюємо оновлення і перезапускаємось
 });
+
+// --- ЛОГІКА ДЛЯ LIVE ВІКНА (WEBSOCKETS) ---
+ipcMain.on('open-live-window', (event, data) => {
+    const { symbol, ex1, ex2 } = data;
+    
+    let liveWin = new BrowserWindow({
+        width: 1200,
+        height: 700,
+        title: `Live: ${symbol} (${ex1} vs ${ex2})`,
+        icon: path.join(__dirname, 'assets', 'icon3.ico'),
+        autoHideMenuBar: true,
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+
+    // Формуємо URL з параметрами, щоб передати назви монет і бірж у нове вікно
+    const liveUrl = new URL(`file://${path.join(__dirname, 'live.html')}`);
+    liveUrl.searchParams.append('symbol', symbol);
+    liveUrl.searchParams.append('ex1', ex1);
+    liveUrl.searchParams.append('ex2', ex2);
+
+    liveWin.loadURL(liveUrl.href);
+
+    liveWin.on('closed', () => {
+        liveWin = null;
+    });
+});

@@ -1171,10 +1171,18 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                     </div>
                 </div>
             </div>
-            <button class="btn-chart" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Історія спреду</button>
+            <div style="display: flex; gap: 10px; margin-top: auto;">
+                <button class="btn-chart" style="margin-top:0; background: #27ae60;" onclick="openLiveWindow('${cleanSymbol}', '${buyEx}', '${sellEx}')">🟢 Live Позиція</button>
+                <button class="btn-chart" style="margin-top:0;" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Історія спреду</button>
+            </div>
         </div>
     `;
 }
+
+window.openLiveWindow = function(symbol, ex1, ex2) {
+    // Відправляємо команду в main.js відкрити нове вікно
+    ipcRenderer.send('open-live-window', { symbol, ex1, ex2 });
+};
 
 function generateEmptyCard(cleanSymbol, context) {
     const btnText = context === 'WL' ? 'Видалити з Watch List' : 'Видалити з Black List';

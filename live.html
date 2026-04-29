@@ -3,16 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <title>Live Позиція</title>
-    <!-- Підключаємо Lightweight Charts для швидких тікових графіків -->
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body { margin: 0; padding: 0; background-color: #0b0e11; color: #EAECEF; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; }
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; flex-wrap: wrap; gap: 10px; }
+        .header-left { display: flex; align-items: center; gap: 20px; }
         .header h2 { margin: 0; font-size: 1.2em; color: #f0b90b; }
+        .timeframes { display: flex; gap: 5px; }
+        .btn-tf { background: #0b0e11; border: 1px solid #3c444f; color: #848e9c; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        .btn-tf.active { background: #3498db; color: #fff; border-color: #3498db; }
+        .btn-tf:hover:not(.active) { background: #2b3139; color: #fff; }
         .price-container { display: flex; gap: 30px; font-size: 1.3em; font-weight: bold; }
         .price-box { display: flex; align-items: center; gap: 8px; }
-        .price-ex1 { color: #00d67c; }
-        .price-ex2 { color: #e74c3c; }
+        .price-ex1 { color: #00d67c; } /* Колір для Ex1 */
+        .price-ex2 { color: #2962FF; } /* Синій колір для Ex2, щоб не плутались свічки */
         #chart-container { flex: 1; width: 100%; position: relative; }
         .status-dot { width: 10px; height: 10px; background-color: #00d67c; border-radius: 50%; animation: blink 1.5s infinite; }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
@@ -20,7 +24,14 @@
 </head>
 <body>
     <div class="header">
-        <h2 id="pair-title">Loading...</h2>
+        <div class="header-left">
+            <h2 id="pair-title">Loading...</h2>
+            <div class="timeframes">
+                <button class="btn-tf" onclick="setTimeframe(1)">1H</button>
+                <button class="btn-tf" onclick="setTimeframe(4)">4H</button>
+                <button class="btn-tf active" onclick="setTimeframe(12)">12H</button>
+            </div>
+        </div>
         <div class="price-container">
             <div class="price-box"><span id="name-ex1">Ex1</span> <span class="price-ex1" id="price-ex1">---</span></div>
             <div class="price-box"><span id="name-ex2">Ex2</span> <span class="price-ex2" id="price-ex2">---</span></div>

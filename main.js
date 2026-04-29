@@ -131,6 +131,8 @@ ipcMain.on('open-live-window', (event, data) => {
 
     liveWin.loadURL(liveUrl.href);
 
+    liveWin.webContents.openDevTools();
+
     liveWin.on('closed', () => {
         liveWin = null;
     });

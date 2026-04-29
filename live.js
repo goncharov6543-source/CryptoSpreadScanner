@@ -49,11 +49,125 @@ function updatePrice(exIndex, price) {
     }
 }
 
-// ==========================================
-// МІСЦЕ ДЛЯ WEBSOCKETS (Адаптери бірж)
-// ==========================================
 console.log(`Підготовка до підключення ${symbol} на ${ex1Name} та ${ex2Name}`);
 
-// В наступному кроці ми напишемо сюди логіку, 
-// яка буде брати WebSockets Binance, Bybit і т.д. 
-// і просто викликати updatePrice(1, 65000.50) або updatePrice(2, 65002.10)
+// ==========================================
+// WEBSOCKETS (Адаптери бірж)
+// ==========================================
+
+// Глобальні змінні для WebSocket з'єднань, щоб можна було їх закривати при потребі
+let ws1 = null;
+let ws2 = null;
+
+// Функція для ініціалізації з'єднання
+function connectExchange(exIndex, exName, symbol) {
+    const cleanSym = symbol.replace('_', '').toUpperCase(); // напр. AIAUSDT
+    let wsUrl = '';
+    
+    // Формуємо URL залежно від біржі
+    if (exName === 'Binance') {
+        wsUrl = `wss://fapi-stream.binance.com/ws/${cleanSym.toLowerCase()}@ticker`;
+    } else if (exName === 'Binance Spot') {
+        wsUrl = `wss://stream.binance.com:9443/ws/${cleanSym.toLowerCase()}@ticker`;
+    } else if (exName === 'Bybit') {
+        wsUrl = 'wss://stream.bybit.com/v5/public/linear';
+    } else if (exName === 'Bybit Spot') {
+        wsUrl = 'wss://stream.bybit.com/v5/public/spot';
+    } else if (exName === 'Gate.io') {
+        wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
+    } else if (exName === 'Gate.io Spot') {
+        wsUrl = 'wss://api.gateio.ws/ws/v4/';
+    } else if (exName === 'MEXC') {
+        wsUrl = 'wss://contract.mexc.com/edge';
+    } else if (exName === 'MEXC Spot') {
+        wsUrl = 'wss://wbs.mexc.com/ws';
+    } else if (exName === 'Bitget') {
+        wsUrl = 'wss://ws.bitget.com/mix/v1/stream';
+    } else if (exName === 'Bitget Spot') {
+        wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
+    } else {
+        console.error(`Біржа ${exName} поки не підтримується для Live-режиму`);
+        return;
+    }
+
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+        console.log(`✅ Підключено до ${exName}`);
+        
+        // Деякі біржі вимагають відправки повідомлення для підписки (Subscribe)
+        if (exName.startsWith('Bybit')) {
+            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`] }));
+        } else if (exName === 'Gate.io') {
+            const time = Math.floor(Date.now() / 1000);
+            ws.send(JSON.stringify({
+                time: time, channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')]
+            }));
+        } else if (exName === 'Gate.io Spot') {
+            const time = Math.floor(Date.now() / 1000);
+            ws.send(JSON.stringify({
+                time: time, channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')]
+            }));
+        } else if (exName === 'MEXC') {
+            ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
+        } else if (exName === 'MEXC Spot') {
+            ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.bookTicker.v3.api@${cleanSym}`] }));
+        } else if (exName.startsWith('Bitget')) {
+            ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: exName.includes('Spot') ? 'SP' : 'USDT-FUTURES', channel: 'ticker', instId: cleanSym }] }));
+        }
+        // Binance починає сипати дані одразу після підключення до правильного URL
+    };
+
+    ws.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            let price = null;
+
+            // Парсинг відповіді залежно від біржі
+            if (exName.startsWith('Binance') && data.c) {
+                price = data.c; // c - last price
+            } 
+            else if (exName.startsWith('Bybit') && data.data && data.data.lastPrice) {
+                price = data.data.lastPrice;
+            } 
+            else if (exName === 'Gate.io' && data.event === 'update' && data.result && data.result.length > 0) {
+                price = data.result[0].last;
+            } 
+            else if (exName === 'Gate.io Spot' && data.event === 'update' && data.result) {
+                price = data.result.last;
+            } 
+            else if (exName === 'MEXC' && data.channel === 'push.ticker' && data.data) {
+                price = data.data.lastPrice;
+            }
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.bookTicker.v3.api@${cleanSym}` && data.d) {
+                // Для MEXC Spot беремо середнє між bid і ask як "останню ціну", якщо lastPrice немає в цьому стрімі
+                price = data.d.a ? data.d.a : data.d.b; 
+            }
+            else if (exName.startsWith('Bitget') && data.data && data.data.length > 0 && data.data[0].lastPr) {
+                price = data.data[0].lastPr;
+            }
+
+            // Якщо ціну знайдено — малюємо її!
+            if (price) {
+                updatePrice(exIndex, price);
+            }
+        } catch (err) {
+            // Ігноруємо помилки парсингу системних повідомлень
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.log(`❌ Помилка WebSocket ${exName}:`, error);
+    };
+
+    ws.onclose = () => {
+        console.log(`🔌 Відключено від ${exName}. Спроба реконекту...`);
+        setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
+    };
+
+    return ws;
+}
+
+// Запускаємо підключення!
+ws1 = connectExchange(1, ex1Name, symbol);
+ws2 = connectExchange(2, ex2Name, symbol);

@@ -1172,8 +1172,8 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                 </div>
             </div>
             <div style="display: flex; gap: 10px; margin-top: auto;">
-                <button class="btn-chart" style="margin-top:0; background: #27ae60;" onclick="openLiveWindow('${cleanSymbol}', '${buyEx}', '${sellEx}')">🟢 Live Позиція</button>
-                <button class="btn-chart" style="margin-top:0;" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Історія спреду</button>
+                <button class="btn-chart" style="margin-top:0; background: #27ae60;" onclick="openLiveWindow('${cleanSymbol}', '${buyEx}', '${sellEx}')">🟢 Live</button>
+                <button class="btn-chart" style="margin-top:0;" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Спред</button>
             </div>
         </div>
     `;

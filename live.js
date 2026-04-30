@@ -3,12 +3,29 @@ const axios = require('axios');
 // 1. Отримуємо параметри
 const urlParams = new URLSearchParams(window.location.search);
 const symbol = urlParams.get('symbol'); 
-const ex1Name = urlParams.get('ex1');   
-const ex2Name = urlParams.get('ex2');   
+const rawEx1Name = urlParams.get('ex1');   
+const rawEx2Name = urlParams.get('ex2');   
 
-document.getElementById('pair-title').innerText = `Live: ${symbol}`;
-document.getElementById('name-ex1').innerText = ex1Name.replace(' Spot', '');
-document.getElementById('name-ex2').innerText = ex2Name.replace(' Spot', '');
+// Функція форматування назви (додає (Spot) або (Fut))
+function formatExName(name) {
+    return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
+}
+
+const ex1NameFormat = formatExName(rawEx1Name);
+const ex2NameFormat = formatExName(rawEx2Name);
+
+document.getElementById('pair-title').innerText = symbol;
+document.getElementById('name-ex1').innerText = ex1NameFormat;
+document.getElementById('name-ex2').innerText = ex2NameFormat;
+
+// Універсальне форматування ціни
+function formatPrice(p) {
+    if (!p || isNaN(p)) return '---';
+    const num = parseFloat(p);
+    if (num < 0.0001) return num.toFixed(10).replace(/\.?0+$/, ''); // Для мемкоїнів
+    if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
+    return num.toFixed(4).replace(/\.?0+$/, '');
+}
 
 // 2. Ініціалізація графіка
 const chartOptions = {
@@ -24,89 +41,109 @@ const chart = LightweightCharts.createChart(chartContainer, chartOptions);
 
 const series1 = chart.addCandlestickSeries({
     upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-    wickUpColor: '#26a69a', wickDownColor: '#ef5350', title: ex1Name.replace(' Spot', '')
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350', title: ex1NameFormat
 });
 
 const series2 = chart.addCandlestickSeries({
     upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, 
-    wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2Name.replace(' Spot', '')
+    wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
 });
 
 window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
+// Керування кольорами
+window.setColorMode = function(mode, btnElement) {
+    document.querySelectorAll('.colors .btn-tf').forEach(btn => btn.classList.remove('active'));
+    btnElement.classList.add('active');
+
+    if (mode === 'solid') {
+        series1.applyOptions({ upColor: '#00d67c', downColor: '#00d67c', wickUpColor: '#00d67c', wickDownColor: '#00d67c' });
+        series2.applyOptions({ upColor: '#2962FF', downColor: '#2962FF', wickUpColor: '#2962FF', wickDownColor: '#2962FF' });
+    } else {
+        series1.applyOptions({ upColor: '#26a69a', downColor: '#ef5350', wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+        series2.applyOptions({ upColor: '#2962FF', downColor: '#FF6D00', wickUpColor: '#2962FF', wickDownColor: '#FF6D00' });
+    }
+};
+
 let lastCandle1 = null;
 let lastCandle2 = null;
+let currentIntervalMins = 1;
 
-// Виправлена функція перемикання часу
-window.setTimeframe = function(hours, btnElement = null) {
-    document.querySelectorAll('.btn-tf').forEach(btn => btn.classList.remove('active'));
+// Перемикання таймфреймів з перезавантаженням історії
+window.changeInterval = async function(mins, btnElement) {
+    document.querySelectorAll('.timeframes .btn-tf').forEach(btn => btn.classList.remove('active'));
+    btnElement.classList.add('active');
     
-    if (btnElement) {
-        btnElement.classList.add('active');
-    } else {
-        // Якщо викликано кодом, шукаємо потрібну кнопку
-        const btns = document.querySelectorAll('.btn-tf');
-        if(hours === 1) btns[0].classList.add('active');
-        else if(hours === 4) btns[1].classList.add('active');
-        else if(hours === 12) btns[2].classList.add('active');
+    currentIntervalMins = mins;
+    
+    // Очищаємо графік перед завантаженням
+    series1.setData([]);
+    series2.setData([]);
+    document.getElementById('price-ex1').innerText = 'Завантаження...';
+    document.getElementById('price-ex2').innerText = 'Завантаження...';
+
+    const [hist1, hist2] = await Promise.all([
+        fetchHistory(rawEx1Name, symbol, mins),
+        fetchHistory(rawEx2Name, symbol, mins)
+    ]);
+
+    if (hist1.length > 0) {
+        series1.setData(hist1);
+        lastCandle1 = hist1[hist1.length - 1];
+        document.getElementById('price-ex1').innerText = formatPrice(lastCandle1.close);
     }
-    
-    const now = Math.floor(Date.now() / 1000);
-    const fromTime = now - (hours * 60 * 60);
-    chart.timeScale().setVisibleRange({ from: fromTime, to: now });
+    if (hist2.length > 0) {
+        series2.setData(hist2);
+        lastCandle2 = hist2[hist2.length - 1];
+        document.getElementById('price-ex2').innerText = formatPrice(lastCandle2.close);
+    }
 };
 
 // ==========================================
-// ОТРИМАННЯ ІСТОРІЇ (REST API) - ЛІМІТ 4 ГОДИНИ
+// ОТРИМАННЯ ІСТОРІЇ (REST API)
 // ==========================================
-async function fetchHistory(exName, symbol) {
+async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    const limit = 240; // 240 хвилин = 4 години
+    const limit = 240; // 240 свічок (4 год для 1m, 20 год для 5m, 60 год для 15m)
     
+    // Формуємо правильний інтервал для кожної біржі
+    const bInterval = `${intervalMins}m`;
+    const bybInterval = `${intervalMins}`;
+    const bitgetSpotInt = `${intervalMins}min`;
+    const mexcFutInt = `Min${intervalMins}`;
+
     try {
         let url = '';
-        if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=1m&limit=${limit}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${cleanSym}&interval=1m&limit=${limit}`;
-        else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${cleanSym}&interval=1&limit=${limit}`;
-        else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${cleanSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${cleanSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}`;
-        else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${cleanSym}&granularity=1min&limit=${limit}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${cleanSym}&productType=USDT-FUTURES&granularity=1m&limit=${limit}`;
-        else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${cleanSym}&interval=1m&limit=${limit}` : `https://contract.mexc.com/api/v1/contract/kline/${cleanSym.replace('USDT','_USDT')}?interval=Min1`;
+        if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${bInterval}&limit=${limit}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${cleanSym}&interval=${bInterval}&limit=${limit}`;
+        else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${cleanSym}&interval=${bybInterval}&limit=${limit}`;
+        else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${cleanSym.replace('USDT','_USDT')}&interval=${bInterval}&limit=${limit}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${cleanSym.replace('USDT','_USDT')}&interval=${bInterval}&limit=${limit}`;
+        else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${cleanSym}&granularity=${bitgetSpotInt}&limit=${limit}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${cleanSym}&productType=USDT-FUTURES&granularity=${bInterval}&limit=${limit}`;
+        else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${cleanSym}&interval=${bInterval}&limit=${limit}` : `https://contract.mexc.com/api/v1/contract/kline/${cleanSym.replace('USDT','_USDT')}?interval=${mexcFutInt}`;
 
         if (!url) return [];
         const r = await axios.get(url, { timeout: 5000 });
         let data = [];
 
-        // Парсинг дат (всі дати переводимо строго в секунди!)
-        if (ex === 'Binance') {
-            data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
-        } else if (ex === 'Bybit') {
-            data = r.data.result.list.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) })).reverse();
-        } else if (ex === 'Gate.io') {
-            if (isSpot) {
-                data = r.data.map(k => ({ time: parseInt(k[0]), open: parseFloat(k[5]), high: parseFloat(k[3]), low: parseFloat(k[4]), close: parseFloat(k[2]) }));
-            } else {
-                data = r.data.map(k => ({ time: parseInt(k.t), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c) }));
-            }
-        } else if (ex === 'Bitget') {
-            data = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
-        } else if (ex === 'MEXC') {
-            if (isSpot) {
-                data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
-            } else {
+        if (ex === 'Binance') data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
+        else if (ex === 'Bybit') data = r.data.result.list.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) })).reverse();
+        else if (ex === 'Gate.io') {
+            if (isSpot) data = r.data.map(k => ({ time: parseInt(k[0]), open: parseFloat(k[5]), high: parseFloat(k[3]), low: parseFloat(k[4]), close: parseFloat(k[2]) }));
+            else data = r.data.map(k => ({ time: parseInt(k.t), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c) }));
+        } 
+        else if (ex === 'Bitget') data = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
+        else if (ex === 'MEXC') {
+            if (isSpot) data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
+            else if (r.data.data && r.data.data.time) {
                 const d = r.data.data;
-                if (d && d.time) {
-                    for(let i=0; i<d.time.length; i++) {
-                        data.push({ time: parseInt(d.time[i]), open: parseFloat(d.open[i]), high: parseFloat(d.high[i]), low: parseFloat(d.low[i]), close: parseFloat(d.close[i]) });
-                    }
-                    data = data.slice(-limit); // Беремо останні 240
-                }
+                for(let i=0; i<d.time.length; i++) data.push({ time: parseInt(d.time[i]), open: parseFloat(d.open[i]), high: parseFloat(d.high[i]), low: parseFloat(d.low[i]), close: parseFloat(d.close[i]) });
+                data = data.slice(-limit); 
             }
         }
 
-        // Очищаємо від дублікатів та сортуємо (Lightweight charts падає від дублікатів)
         data.sort((a, b) => a.time - b.time);
         const uniqueData = [];
         let lastTime = 0;
@@ -117,50 +154,49 @@ async function fetchHistory(exName, symbol) {
             }
         }
         return uniqueData;
-
-    } catch(e) {
-        console.log(`Помилка історії ${exName}:`, e.message);
-        return [];
-    }
+    } catch(e) { return []; }
 }
 
 // ==========================================
-// ЛОГІКА ДОДАВАННЯ ТІКУ ДО СВІЧКИ
+// ЛОГІКА ДОДАВАННЯ ТІКУ (ВРАХУВАННЯ ТАЙМФРЕЙМУ)
 // ==========================================
 function updateLiveCandle(exIndex, price) {
-    const now = new Date();
-    now.setSeconds(0, 0); 
-    const currentMinute = Math.floor(now.getTime() / 1000);
+    const intervalMs = currentIntervalMins * 60 * 1000;
+    const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000);
     
     let lastCandle = exIndex === 1 ? lastCandle1 : lastCandle2;
     let series = exIndex === 1 ? series1 : series2;
 
-    document.getElementById(`price-ex${exIndex}`).innerText = price.toFixed(4);
+    document.getElementById(`price-ex${exIndex}`).innerText = formatPrice(price);
 
     if (!lastCandle) {
-        lastCandle = { time: currentMinute, open: price, high: price, low: price, close: price };
-    } else if (lastCandle.time === currentMinute) {
+        lastCandle = { time: currentCandleTime, open: price, high: price, low: price, close: price };
+    } else if (lastCandle.time === currentCandleTime) {
         lastCandle.close = price;
         if (price > lastCandle.high) lastCandle.high = price;
         if (price < lastCandle.low) lastCandle.low = price;
-    } else if (currentMinute > lastCandle.time) {
-        lastCandle = { time: currentMinute, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
+    } else if (currentCandleTime > lastCandle.time) {
+        lastCandle = { time: currentCandleTime, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
     }
 
-    if (exIndex === 1) lastCandle1 = lastCandle;
-    else lastCandle2 = lastCandle;
-
-    try {
-        series.update(lastCandle);
-    } catch(e) {
-        // Захист від запізнілих тіків
-    }
+    if (exIndex === 1) lastCandle1 = lastCandle; else lastCandle2 = lastCandle;
+    try { series.update(lastCandle); } catch(e) {}
 }
 
 // ==========================================
-// WEBSOCKETS
+// СТАТУС WEBSOCKETS ТА ПІДКЛЮЧЕННЯ
 // ==========================================
 let ws1 = null, ws2 = null;
+let ws1Active = false, ws2Active = false;
+
+function updateStatusDot() {
+    const dot = document.getElementById('ws-status-dot');
+    if (ws1Active && ws2Active) {
+        dot.className = 'status-dot dot-green';
+    } else {
+        dot.className = 'status-dot dot-red';
+    }
+}
 
 function connectExchange(exIndex, exName, symbol) {
     const cleanSym = symbol.replace('_', '').toUpperCase(); 
@@ -178,15 +214,17 @@ function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
     if (!wsUrl) return null;
-
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+        if (exIndex === 1) ws1Active = true; else ws2Active = true;
+        updateStatusDot();
+
         if (exName.startsWith('Bybit')) ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`] }));
         else if (exName === 'Gate.io') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
         else if (exName === 'Gate.io Spot') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
         else if (exName === 'MEXC') ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
-        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.bookTicker.v3.api@${cleanSym}`] }));
+        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`] }));
         else if (exName.startsWith('Bitget')) ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: exName.includes('Spot') ? 'SP' : 'USDT-FUTURES', channel: 'ticker', instId: cleanSym }] }));
     };
 
@@ -198,9 +236,9 @@ function connectExchange(exIndex, exName, symbol) {
             if (exName.startsWith('Binance') && data.c) price = parseFloat(data.c); 
             else if (exName.startsWith('Bybit') && data.data && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
             else if (exName === 'Gate.io' && data.event === 'update' && data.result && data.result.length > 0) price = parseFloat(data.result[0].last);
-            else if (exName === 'Gate.io Spot' && data.event === 'update' && data.result) price = parseFloat(data.result.last);
+            else if (exName === 'Gate.io Spot' && data.event === 'update' && data.result && data.result.last) price = parseFloat(data.result.last);
             else if (exName === 'MEXC' && data.channel === 'push.ticker' && data.data) price = parseFloat(data.data.lastPrice);
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.bookTicker.v3.api@${cleanSym}` && data.d) price = parseFloat(data.d.a ? data.d.a : data.d.b); 
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p); 
             else if (exName.startsWith('Bitget') && data.data && data.data.length > 0 && data.data[0].lastPr) price = parseFloat(data.data[0].lastPr);
 
             if (price) updateLiveCandle(exIndex, price);
@@ -208,6 +246,8 @@ function connectExchange(exIndex, exName, symbol) {
     };
 
     ws.onclose = () => {
+        if (exIndex === 1) ws1Active = false; else ws2Active = false;
+        updateStatusDot();
         setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
     };
 
@@ -215,46 +255,18 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// ЗАПУСК (Ініціалізація історії + Лайв)
+// ЗАПУСК 
 // ==========================================
 async function initLive() {
-    document.getElementById('price-ex1').innerText = 'Завантаження...';
-    document.getElementById('price-ex2').innerText = 'Завантаження...';
-
-    // 1. Отримуємо 4 години історії
-    const [hist1, hist2] = await Promise.all([
-        fetchHistory(ex1Name, symbol),
-        fetchHistory(ex2Name, symbol)
-    ]);
-
-    // 2. Відмальовуємо історію
-    if (hist1.length > 0) {
-        series1.setData(hist1);
-        lastCandle1 = hist1[hist1.length - 1];
-        document.getElementById('price-ex1').innerText = lastCandle1.close.toFixed(4);
-    } else {
-        document.getElementById('price-ex1').innerText = 'Немає історії';
-    }
-    
-    if (hist2.length > 0) {
-        series2.setData(hist2);
-        lastCandle2 = hist2[hist2.length - 1];
-        document.getElementById('price-ex2').innerText = lastCandle2.close.toFixed(4);
-    } else {
-        document.getElementById('price-ex2').innerText = 'Немає історії';
-    }
-
-    // Встановлюємо дефолтний вигляд на 4 години
-    window.setTimeframe(4, null);
-
-    // 3. Підключаємо WebSockets для тіків
-    ws1 = connectExchange(1, ex1Name, symbol);
-    ws2 = connectExchange(2, ex2Name, symbol);
+    // Імітуємо клік по 1-хвилинному таймфрейму при старті
+    await window.changeInterval(1, document.querySelectorAll('.timeframes .btn-tf')[0]);
+    ws1 = connectExchange(1, rawEx1Name, symbol);
+    ws2 = connectExchange(2, rawEx2Name, symbol);
 }
 
 initLive();
 
-// Ping для утримання з'єднання
+// Ping
 setInterval(() => {
     const sendPing = (ws, exName) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -264,6 +276,6 @@ setInterval(() => {
         else if (exName.startsWith('MEXC')) ws.send(JSON.stringify({ method: 'ping' }));
         else if (exName.startsWith('Bitget')) ws.send('ping');
     };
-    sendPing(ws1, ex1Name);
-    sendPing(ws2, ex2Name);
+    sendPing(ws1, rawEx1Name);
+    sendPing(ws2, rawEx2Name);
 }, 15000);

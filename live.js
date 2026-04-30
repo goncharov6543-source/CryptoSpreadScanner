@@ -1,6 +1,8 @@
 const axios = require('axios');
 
-// 1. Отримуємо параметри
+// ==========================================
+// 1. БАЗОВІ НАЛАШТУВАННЯ
+// ==========================================
 const urlParams = new URLSearchParams(window.location.search);
 const symbol = urlParams.get('symbol');
 const rawEx1Name = urlParams.get('ex1');
@@ -16,6 +18,8 @@ const ex2NameFormat = formatExName(rawEx2Name);
 document.getElementById('pair-title').innerText = symbol;
 document.getElementById('name-ex1').innerText = ex1NameFormat;
 document.getElementById('name-ex2').innerText = ex2NameFormat;
+document.getElementById('ob-title-1').innerText = ex1NameFormat;
+document.getElementById('ob-title-2').innerText = ex2NameFormat;
 
 function formatPrice(p) {
     if (!p || isNaN(p)) return '---';
@@ -34,7 +38,9 @@ function getMinMove(price) {
     return 0.1;
 }
 
-// 2. Ініціалізація графіка
+// ==========================================
+// 2. ГРАФІК (Lightweight Charts)
+// ==========================================
 const chartOptions = {
     layout: { textColor: '#d1d4dc', background: { type: 'solid', color: '#0b0e11' } },
     grid: { vertLines: { color: '#2b3139', style: 1 }, horzLines: { color: '#2b3139', style: 1 } },
@@ -56,36 +62,10 @@ const series2 = chart.addCandlestickSeries({
     wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
 });
 
-// Глобальні змінні для цін
-let currentP1 = null;
-let currentP2 = null;
-
-// Невидима лінія для віджета спреду у відсотках
-const spreadSeries = chart.addLineSeries({
-    color: 'rgba(0, 0, 0, 0)', // Повністю прозора лінія
-    lineWidth: 0,
-    crosshairMarkerVisible: false,
-    priceLineVisible: false,
-    lastValueVisible: true,
-    title: 'Спред',
-    priceFormat: {
-        type: 'custom',
-        minMove: 0.0001,
-        formatter: () => {
-            if (currentP1 && currentP2 && currentP1 > 0) {
-                const spread = ((currentP2 - currentP1) / currentP1) * 100;
-                return spread.toFixed(2) + '%';
-            }
-            return '0.00%';
-        }
-    }
-});
-
 window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
-// Керування кольорами (через випадаючий список)
 window.setColorMode = function(mode) {
     if (mode === 'solid') {
         series1.applyOptions({ upColor: '#00d67c', downColor: '#00d67c', wickUpColor: '#00d67c', wickDownColor: '#00d67c' });
@@ -96,21 +76,27 @@ window.setColorMode = function(mode) {
     }
 };
 
-let lastCandle1 = null;
-let lastCandle2 = null;
+let lastCandle1 = null, lastCandle2 = null;
 let currentIntervalMins = 1;
+let currentP1 = null, currentP2 = null;
 
-// Перемикання таймфреймів з перезавантаженням історії
+function updateLiveSpread() {
+    if (currentP1 && currentP2 && currentP1 > 0) {
+        const spread = ((currentP2 - currentP1) / currentP1) * 100;
+        document.getElementById('header-spread').innerText = spread.toFixed(2) + '%';
+    }
+}
+
+// ==========================================
+// 3. ІСТОРІЯ ТА ОНОВЛЕННЯ ТАЙМФРЕЙМІВ
+// ==========================================
 window.changeInterval = async function(mins, btnElement) {
     document.querySelectorAll('.btn-interval').forEach(btn => btn.classList.remove('active'));
     if(btnElement) btnElement.classList.add('active');
 
     currentIntervalMins = mins;
 
-    series1.setData([]);
-    series2.setData([]);
-    spreadSeries.setData([]);
-
+    series1.setData([]); series2.setData([]);
     document.getElementById('price-ex1').innerText = 'Завантаження...';
     document.getElementById('price-ex2').innerText = 'Завантаження...';
 
@@ -119,7 +105,6 @@ window.changeInterval = async function(mins, btnElement) {
         fetchHistory(rawEx2Name, symbol, mins)
     ]);
 
-    // Налаштовуємо правильне відображення цифр (щоб не відрізало нулі)
     let minMove = 0.01;
     if (hist1.length > 0) minMove = getMinMove(hist1[0].close);
     else if (hist2.length > 0) minMove = getMinMove(hist2[0].close);
@@ -129,38 +114,23 @@ window.changeInterval = async function(mins, btnElement) {
     series2.applyOptions({ priceFormat: customPriceFormat });
 
     if (hist1.length > 0) {
-        series1.setData(hist1);
-        lastCandle1 = hist1[hist1.length - 1];
-        currentP1 = lastCandle1.close;
-        document.getElementById('price-ex1').innerText = formatPrice(currentP1);
+        series1.setData(hist1); lastCandle1 = hist1[hist1.length - 1];
+        currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1);
     }
     if (hist2.length > 0) {
-        series2.setData(hist2);
-        lastCandle2 = hist2[hist2.length - 1];
-        currentP2 = lastCandle2.close;
-        document.getElementById('price-ex2').innerText = formatPrice(currentP2);
+        series2.setData(hist2); lastCandle2 = hist2[hist2.length - 1];
+        currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2);
     }
-
-    // Розраховуємо середню лінію для історії
-    let spreadData = [];
-    let h1Map = {};
-    hist1.forEach(d => h1Map[d.time] = d.close);
-    hist2.forEach(d => {
-        if (h1Map[d.time]) {
-            spreadData.push({ time: d.time, value: (h1Map[d.time] + d.close) / 2 });
-        }
-    });
-    spreadSeries.setData(spreadData);
+    updateLiveSpread();
 };
 
-// ==========================================
-// ОТРИМАННЯ ІСТОРІЇ (REST API)
-// ==========================================
 async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    const limit = 240; 
+    
+    // Встановлюємо 720 свічок (12 годин для 1 хвилинки)
+    const limit = 720; 
 
     const bInterval = `${intervalMins}m`;
     const bybInterval = `${intervalMins}`;
@@ -196,21 +166,12 @@ async function fetchHistory(exName, symbol, intervalMins) {
         }
 
         data.sort((a, b) => a.time - b.time);
-        const uniqueData = [];
-        let lastTime = 0;
-        for (let d of data) {
-            if (d.time > lastTime && !isNaN(d.time) && !isNaN(d.close)) {
-                uniqueData.push(d);
-                lastTime = d.time;
-            }
-        }
+        const uniqueData = []; let lastTime = 0;
+        for (let d of data) { if (d.time > lastTime && !isNaN(d.time) && !isNaN(d.close)) { uniqueData.push(d); lastTime = d.time; } }
         return uniqueData;
     } catch(e) { return []; }
 }
 
-// ==========================================
-// ЛОГІКА ДОДАВАННЯ ТІКУ
-// ==========================================
 function updateLiveCandle(exIndex, price) {
     const intervalMs = currentIntervalMins * 60 * 1000;
     const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000);
@@ -219,10 +180,10 @@ function updateLiveCandle(exIndex, price) {
     let series = exIndex === 1 ? series1 : series2;
 
     document.getElementById(`price-ex${exIndex}`).innerText = formatPrice(price);
+    document.getElementById(`ob-mid-${exIndex}`).innerText = formatPrice(price);
 
-    if (!lastCandle) {
-        lastCandle = { time: currentCandleTime, open: price, high: price, low: price, close: price };
-    } else if (lastCandle.time === currentCandleTime) {
+    if (!lastCandle) lastCandle = { time: currentCandleTime, open: price, high: price, low: price, close: price };
+    else if (lastCandle.time === currentCandleTime) {
         lastCandle.close = price;
         if (price > lastCandle.high) lastCandle.high = price;
         if (price < lastCandle.low) lastCandle.low = price;
@@ -230,48 +191,98 @@ function updateLiveCandle(exIndex, price) {
         lastCandle = { time: currentCandleTime, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
     }
 
-    if (exIndex === 1) {
-        lastCandle1 = lastCandle;
-        currentP1 = price;
-    } else {
-        lastCandle2 = lastCandle;
-        currentP2 = price;
-    }
+    if (exIndex === 1) { lastCandle1 = lastCandle; currentP1 = price; } 
+    else { lastCandle2 = lastCandle; currentP2 = price; }
 
-    try {
-        series.update(lastCandle);
-
-        // Магія: оновлюємо центральний віджет, щоб він завжди був по центру!
-        if (lastCandle1 && lastCandle2) {
-            spreadSeries.update({
-                time: currentCandleTime,
-                value: (lastCandle1.close + lastCandle2.close) / 2
-            });
-        }
-    } catch(e) {}
+    updateLiveSpread();
+    try { series.update(lastCandle); } catch(e) {}
 }
 
 // ==========================================
-// СТАТУС WEBSOCKETS ТА ПІДКЛЮЧЕННЯ
+// 4. ДВИЖОК СТАКАНА (Order Book Engine)
+// ==========================================
+let obState = { 1: { asks: [], bids: [] }, 2: { asks: [], bids: [] } };
+
+function normalizeObData(arr) {
+    if (!arr) return [];
+    return arr.map(item => {
+        if (Array.isArray(item)) return { p: parseFloat(item[0]), q: parseFloat(item[1]) };
+        if (item.p !== undefined && item.s !== undefined) return { p: parseFloat(item.p), q: parseFloat(item.s) }; // Gate
+        return { p: 0, q: 0 };
+    });
+}
+
+function updateObState(exIndex, type, asksRaw, bidsRaw) {
+    const asks = normalizeObData(asksRaw);
+    const bids = normalizeObData(bidsRaw);
+
+    if (type === 'snapshot') {
+        obState[exIndex].asks = asks;
+        obState[exIndex].bids = bids;
+    } else if (type === 'delta') {
+        asks.forEach(a => {
+            let idx = obState[exIndex].asks.findIndex(x => x.p === a.p);
+            if (idx > -1) { if (a.q === 0) obState[exIndex].asks.splice(idx, 1); else obState[exIndex].asks[idx].q = a.q; }
+            else if (a.q > 0) obState[exIndex].asks.push(a);
+        });
+        bids.forEach(b => {
+            let idx = obState[exIndex].bids.findIndex(x => x.p === b.p);
+            if (idx > -1) { if (b.q === 0) obState[exIndex].bids.splice(idx, 1); else obState[exIndex].bids[idx].q = b.q; }
+            else if (b.q > 0) obState[exIndex].bids.push(b);
+        });
+    }
+
+    // Сортуємо: Аски (продаж) по зростанню, Біди (купівля) по спаданню
+    obState[exIndex].asks.sort((a, b) => a.p - b.p);
+    obState[exIndex].bids.sort((a, b) => b.p - a.p);
+
+    renderOrderBook(exIndex);
+}
+
+function renderOrderBook(exIndex) {
+    const asksContainer = document.getElementById(`ob-asks-${exIndex}`);
+    const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
+
+    // Беремо топ-15 рівнів (аски перевертаємо, щоб найдорожчий був зверху)
+    const asks = obState[exIndex].asks.slice(0, 15).reverse();
+    const bids = obState[exIndex].bids.slice(0, 15);
+
+    let maxQty = 0;
+    asks.forEach(a => { if(a.q > maxQty) maxQty = a.q; });
+    bids.forEach(b => { if(b.q > maxQty) maxQty = b.q; });
+
+    let asksHtml = '';
+    asks.forEach(a => {
+        const width = maxQty > 0 ? (a.q / maxQty) * 100 : 0;
+        asksHtml += `<div class="ob-row"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${a.q.toFixed(2)}</span></div>`;
+    });
+    asksContainer.innerHTML = asksHtml;
+
+    let bidsHtml = '';
+    bids.forEach(b => {
+        const width = maxQty > 0 ? (b.q / maxQty) * 100 : 0;
+        bidsHtml += `<div class="ob-row"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${b.q.toFixed(2)}</span></div>`;
+    });
+    bidsContainer.innerHTML = bidsHtml;
+}
+
+// ==========================================
+// 5. WEBSOCKETS (Графік + Стакани)
 // ==========================================
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
 
 function updateStatusDot() {
     const dot = document.getElementById('ws-status-dot');
-    if (ws1Active && ws2Active) {
-        dot.className = 'status-dot dot-green';
-    } else {
-        dot.className = 'status-dot dot-red';
-    }
+    dot.className = (ws1Active && ws2Active) ? 'status-dot dot-green' : 'status-dot dot-red';
 }
 
 function connectExchange(exIndex, exName, symbol) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     let wsUrl = '';
 
-    if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/ws/${cleanSym.toLowerCase()}@ticker`;
-    else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/ws/${cleanSym.toLowerCase()}@ticker`;
+    if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms`;
+    else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms`;
     else if (exName === 'Bybit') wsUrl = 'wss://stream.bybit.com/v5/public/linear';
     else if (exName === 'Bybit Spot') wsUrl = 'wss://stream.bybit.com/v5/public/spot';
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
@@ -288,28 +299,65 @@ function connectExchange(exIndex, exName, symbol) {
         if (exIndex === 1) ws1Active = true; else ws2Active = true;
         updateStatusDot();
 
-        if (exName.startsWith('Bybit')) ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`] }));
-        else if (exName === 'Gate.io') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-        else if (exName === 'Gate.io Spot') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-        else if (exName === 'MEXC') ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
-        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`] }));
-        else if (exName.startsWith('Bitget')) ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: exName.includes('Spot') ? 'SP' : 'USDT-FUTURES', channel: 'ticker', instId: cleanSym }] }));
+        if (exName.startsWith('Bybit')) {
+            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`, `orderbook.50.${cleanSym}`] }));
+        } else if (exName === 'Gate.io') {
+            const time = Math.floor(Date.now()/1000);
+            ws.send(JSON.stringify({ time: time, channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
+            ws.send(JSON.stringify({ time: time, channel: 'futures.order_book_update', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
+        } else if (exName === 'Gate.io Spot') {
+            const time = Math.floor(Date.now()/1000);
+            ws.send(JSON.stringify({ time: time, channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
+            ws.send(JSON.stringify({ time: time, channel: 'spot.order_book_update', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
+        } else if (exName === 'MEXC') {
+            ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
+            ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
+        } else if (exName === 'MEXC Spot') {
+            ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`, `spot@public.limit.depth.v3.api@${cleanSym}`] }));
+        } else if (exName.startsWith('Bitget')) {
+            const instType = exName.includes('Spot') ? 'SP' : 'USDT-FUTURES';
+            ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: cleanSym }, { instType: instType, channel: 'books15', instId: cleanSym }] }));
+        }
     };
 
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
+            
+            // --- ПАРСИНГ ТІКЕРА (ГРАФІК) ---
             let price = null;
-
-            if (exName.startsWith('Binance') && data.c) price = parseFloat(data.c);
-            else if (exName.startsWith('Bybit') && data.data && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
-            else if (exName === 'Gate.io' && data.event === 'update' && data.result && data.result.length > 0) price = parseFloat(data.result[0].last);
-            else if (exName === 'Gate.io Spot' && data.event === 'update' && data.result && data.result.last) price = parseFloat(data.result.last);
+            if (exName.startsWith('Binance') && data.data && data.data.c) price = parseFloat(data.data.c); 
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('tickers') && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
+            else if (exName === 'Gate.io' && data.channel === 'futures.tickers' && data.result && data.result.length > 0) price = parseFloat(data.result[0].last);
+            else if (exName === 'Gate.io Spot' && data.channel === 'spot.tickers' && data.result && data.result.last) price = parseFloat(data.result.last);
             else if (exName === 'MEXC' && data.channel === 'push.ticker' && data.data) price = parseFloat(data.data.lastPrice);
             else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p);
-            else if (exName.startsWith('Bitget') && data.data && data.data.length > 0 && data.data[0].lastPr) price = parseFloat(data.data[0].lastPr);
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'ticker' && data.data) price = parseFloat(data.data[0].lastPr);
 
             if (price) updateLiveCandle(exIndex, price);
+
+            // --- ПАРСИНГ СТАКАНА (ORDER BOOK) ---
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) {
+                updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
+            } 
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
+                updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
+            }
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book_update') && data.result) {
+                // Gate.io update payload
+                const asks = data.result.asks || (data.result.a || []);
+                const bids = data.result.bids || (data.result.b || []);
+                updateObState(exIndex, 'delta', asks, bids);
+            }
+            else if (exName === 'MEXC' && data.channel === 'push.depth') {
+                updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+            }
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}`) {
+                updateObState(exIndex, 'delta', data.d.asks, data.d.bids);
+            }
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) {
+                updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
+            }
         } catch (err) {}
     };
 
@@ -323,7 +371,7 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// ЗАПУСК
+// 6. ЗАПУСК ТА PING
 // ==========================================
 async function initLive() {
     await window.changeInterval(1, document.getElementById('btn-1m'));
@@ -333,7 +381,6 @@ async function initLive() {
 
 initLive();
 
-// Ping
 setInterval(() => {
     const sendPing = (ws, exName) => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;

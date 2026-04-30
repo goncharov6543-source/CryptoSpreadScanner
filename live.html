@@ -6,31 +6,54 @@
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
         body { margin: 0; padding: 0; background-color: #0b0e11; color: #EAECEF; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-        .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; flex-wrap: wrap; gap: 10px; }
+        
+        /* Хедер */
+        .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; flex-shrink: 0;}
         .header-left { display: flex; align-items: center; gap: 20px; }
         .header h2 { margin: 0; font-size: 1.3em; color: #f0b90b; letter-spacing: 0.5px; }
-        
         .controls-group { display: flex; gap: 5px; background: #0b0e11; padding: 4px; border-radius: 6px; border: 1px solid #2b3139; }
         .btn-tf { background: transparent; border: none; color: #848e9c; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         .btn-tf.active { background: #3498db; color: #fff; }
         .btn-tf:hover:not(.active) { background: #2b3139; color: #fff; }
-        
-        /* Випадаючий список для свічок */
         .custom-select { background: #0b0e11; color: #848e9c; border: 1px solid #3c444f; padding: 6px 12px; border-radius: 6px; font-weight: bold; outline: none; cursor: pointer; transition: 0.2s; font-family: inherit;}
-        .custom-select:hover { border-color: #3498db; color: #fff; }
-        .custom-select option { background: #161a1e; color: #fff; font-weight: bold;}
-
-        /* Ціни та хедер */
-        .price-container { display: flex; gap: 20px; font-size: 1.3em; font-weight: bold; margin-left: auto; margin-right: 20px; align-items: center;}
-        .price-box { display: flex; align-items: center; gap: 8px; }
-        .price-ex1 { color: #00d67c; } 
-        .price-ex2 { color: #2962FF; } 
-
-        #chart-container { flex: 1; width: 100%; position: relative; }
+        
+        .header-right { display: flex; align-items: center; gap: 20px; }
+        .spread-badge { background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 6px 15px; border-radius: 6px; font-size: 1.2em; font-weight: bold; border: 1px solid rgba(52, 152, 219, 0.3); }
         .status-dot { width: 12px; height: 12px; border-radius: 50%; transition: background 0.3s; }
         .dot-green { background-color: #00d67c; animation: blink 1.5s infinite; }
         .dot-red { background-color: #e74c3c; box-shadow: 0 0 8px rgba(231, 76, 60, 0.8); }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
+
+        /* Макет 60/40 */
+        .main-layout { display: flex; flex: 1; height: 0; }
+        
+        /* 60% Графік */
+        #chart-wrapper { width: 60%; height: 100%; border-right: 1px solid #2b3139; position: relative; display: flex; flex-direction: column;}
+        .prices-overlay { display: flex; gap: 30px; padding: 10px 20px; font-size: 1.2em; font-weight: bold; background: #0b0e11; border-bottom: 1px solid #2b3139;}
+        .price-box { display: flex; align-items: center; gap: 8px; }
+        .price-ex1 { color: #00d67c; } 
+        .price-ex2 { color: #2962FF; }
+        #chart-container { flex: 1; width: 100%; position: relative; }
+
+        /* 40% Стакани */
+        #ob-wrapper { width: 40%; height: 100%; display: flex; }
+        .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; background: #0b0e11; border-right: 1px solid #2b3139; box-sizing: border-box;}
+        .ob-header { text-align: center; padding: 8px; background: #161a1e; font-weight: bold; color: #848e9c; border-bottom: 1px solid #2b3139; font-size: 0.9em;}
+        .ob-mid { text-align: center; padding: 10px; font-size: 1.2em; font-weight: bold; background: #161a1e; border-top: 1px solid #2b3139; border-bottom: 1px solid #2b3139;}
+        .ob-mid-ex1 { color: #00d67c; }
+        .ob-mid-ex2 { color: #2962FF; }
+        
+        .ob-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; justify-content: flex-end; padding: 2px 0;}
+        .ob-section.bids { justify-content: flex-start; }
+        
+        .ob-row { display: flex; justify-content: space-between; padding: 2px 10px; position: relative; font-size: 0.85em; font-family: monospace; z-index: 1;}
+        .ob-bg { position: absolute; right: 0; top: 0; height: 100%; z-index: -1; opacity: 0.15; transition: width 0.1s; }
+        .ob-bg-ask { background-color: #ef5350; }
+        .ob-bg-bid { background-color: #26a69a; }
+        .ob-price { font-weight: bold; }
+        .ob-qty { color: #d1d4dc; }
+        .c-ask { color: #ef5350; }
+        .c-bid { color: #26a69a; }
     </style>
 </head>
 <body>
@@ -50,16 +73,41 @@
             </select>
         </div>
         
-        <div class="price-container">
-            <div class="price-box"><span id="name-ex1" style="font-size:0.8em; color:#848e9c;">Ex1</span> <span class="price-ex1" id="price-ex1">---</span></div>
-            <div class="price-box"><span id="name-ex2" style="font-size:0.8em; color:#848e9c;">Ex2</span> <span class="price-ex2" id="price-ex2">---</span></div>
-        </div>
-        
-        <div title="Статус WebSocket з'єднання">
-            <div class="status-dot dot-red" id="ws-status-dot"></div>
+        <div class="header-right">
+            <div class="spread-badge" id="header-spread">0.00%</div>
+            <div title="Статус WebSocket з'єднання">
+                <div class="status-dot dot-red" id="ws-status-dot"></div>
+            </div>
         </div>
     </div>
-    <div id="chart-container"></div>
+
+    <div class="main-layout">
+        <div id="chart-wrapper">
+            <div class="prices-overlay">
+                <div class="price-box"><span id="name-ex1" style="font-size:0.8em; color:#848e9c;">Ex1</span> <span class="price-ex1" id="price-ex1">---</span></div>
+                <div class="price-box"><span id="name-ex2" style="font-size:0.8em; color:#848e9c;">Ex2</span> <span class="price-ex2" id="price-ex2">---</span></div>
+            </div>
+            <div id="chart-container"></div>
+        </div>
+        
+        <div id="ob-wrapper">
+            <!-- Стакан Біржі 1 -->
+            <div class="ob-col">
+                <div class="ob-header" id="ob-title-1">Exchange 1</div>
+                <div class="ob-section asks" id="ob-asks-1"></div>
+                <div class="ob-mid ob-mid-ex1" id="ob-mid-1">---</div>
+                <div class="ob-section bids" id="ob-bids-1"></div>
+            </div>
+            <!-- Стакан Біржі 2 -->
+            <div class="ob-col" style="border-right: none;">
+                <div class="ob-header" id="ob-title-2">Exchange 2</div>
+                <div class="ob-section asks" id="ob-asks-2"></div>
+                <div class="ob-mid ob-mid-ex2" id="ob-mid-2">---</div>
+                <div class="ob-section bids" id="ob-bids-2"></div>
+            </div>
+        </div>
+    </div>
+
     <script src="live.js"></script>
 </body>
 </html>

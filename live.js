@@ -6,7 +6,6 @@ const symbol = urlParams.get('symbol');
 const rawEx1Name = urlParams.get('ex1');   
 const rawEx2Name = urlParams.get('ex2');   
 
-// Функція форматування назви (додає (Spot) або (Fut))
 function formatExName(name) {
     return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
 }
@@ -18,11 +17,10 @@ document.getElementById('pair-title').innerText = symbol;
 document.getElementById('name-ex1').innerText = ex1NameFormat;
 document.getElementById('name-ex2').innerText = ex2NameFormat;
 
-// Універсальне форматування ціни
 function formatPrice(p) {
     if (!p || isNaN(p)) return '---';
     const num = parseFloat(p);
-    if (num < 0.0001) return num.toFixed(10).replace(/\.?0+$/, ''); // Для мемкоїнів
+    if (num < 0.0001) return num.toFixed(10).replace(/\.?0+$/, ''); 
     if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
@@ -53,11 +51,8 @@ window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
-// Керування кольорами
-window.setColorMode = function(mode, btnElement) {
-    document.querySelectorAll('.colors .btn-tf').forEach(btn => btn.classList.remove('active'));
-    btnElement.classList.add('active');
-
+// Керування кольорами (через випадаючий список)
+window.setColorMode = function(mode) {
     if (mode === 'solid') {
         series1.applyOptions({ upColor: '#00d67c', downColor: '#00d67c', wickUpColor: '#00d67c', wickDownColor: '#00d67c' });
         series2.applyOptions({ upColor: '#2962FF', downColor: '#2962FF', wickUpColor: '#2962FF', wickDownColor: '#2962FF' });
@@ -71,14 +66,24 @@ let lastCandle1 = null;
 let lastCandle2 = null;
 let currentIntervalMins = 1;
 
+// Змінні для живого спреду
+let currentP1 = null;
+let currentP2 = null;
+
+function updateLiveSpread() {
+    if (currentP1 && currentP2 && currentP1 > 0) {
+        const spread = ((currentP2 - currentP1) / currentP1) * 100;
+        document.getElementById('live-spread').innerText = spread.toFixed(2) + '%';
+    }
+}
+
 // Перемикання таймфреймів з перезавантаженням історії
 window.changeInterval = async function(mins, btnElement) {
-    document.querySelectorAll('.timeframes .btn-tf').forEach(btn => btn.classList.remove('active'));
-    btnElement.classList.add('active');
+    document.querySelectorAll('.btn-interval').forEach(btn => btn.classList.remove('active'));
+    if(btnElement) btnElement.classList.add('active');
     
     currentIntervalMins = mins;
     
-    // Очищаємо графік перед завантаженням
     series1.setData([]);
     series2.setData([]);
     document.getElementById('price-ex1').innerText = 'Завантаження...';
@@ -92,13 +97,17 @@ window.changeInterval = async function(mins, btnElement) {
     if (hist1.length > 0) {
         series1.setData(hist1);
         lastCandle1 = hist1[hist1.length - 1];
-        document.getElementById('price-ex1').innerText = formatPrice(lastCandle1.close);
+        currentP1 = lastCandle1.close;
+        document.getElementById('price-ex1').innerText = formatPrice(currentP1);
     }
     if (hist2.length > 0) {
         series2.setData(hist2);
         lastCandle2 = hist2[hist2.length - 1];
-        document.getElementById('price-ex2').innerText = formatPrice(lastCandle2.close);
+        currentP2 = lastCandle2.close;
+        document.getElementById('price-ex2').innerText = formatPrice(currentP2);
     }
+    
+    updateLiveSpread();
 };
 
 // ==========================================
@@ -108,9 +117,8 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    const limit = 240; // 240 свічок (4 год для 1m, 20 год для 5m, 60 год для 15m)
+    const limit = 240; 
     
-    // Формуємо правильний інтервал для кожної біржі
     const bInterval = `${intervalMins}m`;
     const bybInterval = `${intervalMins}`;
     const bitgetSpotInt = `${intervalMins}min`;
@@ -179,7 +187,16 @@ function updateLiveCandle(exIndex, price) {
         lastCandle = { time: currentCandleTime, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
     }
 
-    if (exIndex === 1) lastCandle1 = lastCandle; else lastCandle2 = lastCandle;
+    if (exIndex === 1) {
+        lastCandle1 = lastCandle;
+        currentP1 = price;
+    } else {
+        lastCandle2 = lastCandle;
+        currentP2 = price;
+    }
+    
+    updateLiveSpread(); // Оновлюємо віджет спреду
+
     try { series.update(lastCandle); } catch(e) {}
 }
 
@@ -255,11 +272,11 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// ЗАПУСК 
+// ЗАПУСК (Виклик стартових налаштувань)
 // ==========================================
 async function initLive() {
-    // Імітуємо клік по 1-хвилинному таймфрейму при старті
-    await window.changeInterval(1, document.querySelectorAll('.timeframes .btn-tf')[0]);
+    // Вказуємо id кнопки, щоб вона коректно підсвітилась при старті
+    await window.changeInterval(1, document.getElementById('btn-1m'));
     ws1 = connectExchange(1, rawEx1Name, symbol);
     ws2 = connectExchange(2, rawEx2Name, symbol);
 }

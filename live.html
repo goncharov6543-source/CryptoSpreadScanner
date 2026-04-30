@@ -9,16 +9,24 @@
         .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; flex-wrap: wrap; gap: 10px; }
         .header-left { display: flex; align-items: center; gap: 20px; }
         .header h2 { margin: 0; font-size: 1.3em; color: #f0b90b; letter-spacing: 0.5px; }
+        
         .controls-group { display: flex; gap: 5px; background: #0b0e11; padding: 4px; border-radius: 6px; border: 1px solid #2b3139; }
         .btn-tf { background: transparent; border: none; color: #848e9c; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         .btn-tf.active { background: #3498db; color: #fff; }
         .btn-tf:hover:not(.active) { background: #2b3139; color: #fff; }
         
-        .price-container { display: flex; gap: 30px; font-size: 1.3em; font-weight: bold; margin-left: auto; margin-right: 20px;}
+        /* Стилі для випадаючого списку свічок */
+        .custom-select { background: #0b0e11; color: #848e9c; border: 1px solid #3c444f; padding: 6px 12px; border-radius: 6px; font-weight: bold; outline: none; cursor: pointer; transition: 0.2s; font-family: inherit;}
+        .custom-select:hover { border-color: #3498db; color: #fff; }
+        .custom-select option { background: #161a1e; color: #fff; font-weight: bold;}
+
+        /* Блок цін і віджет спреду */
+        .price-container { display: flex; gap: 20px; font-size: 1.3em; font-weight: bold; margin-left: auto; margin-right: 20px; align-items: center;}
         .price-box { display: flex; align-items: center; gap: 8px; }
         .price-ex1 { color: #00d67c; } 
         .price-ex2 { color: #2962FF; } 
-        
+        .spread-badge { background: rgba(52, 152, 219, 0.15); color: #3498db; padding: 4px 12px; border-radius: 6px; font-size: 0.85em; border: 1px solid rgba(52, 152, 219, 0.3); min-width: 60px; text-align: center; }
+
         #chart-container { flex: 1; width: 100%; position: relative; }
         .status-dot { width: 12px; height: 12px; border-radius: 50%; transition: background 0.3s; }
         .dot-green { background-color: #00d67c; animation: blink 1.5s infinite; }
@@ -32,19 +40,20 @@
             <h2 id="pair-title">Loading...</h2>
             
             <div class="controls-group">
-                <button class="btn-tf active" onclick="changeInterval(1, this)">1m</button>
-                <button class="btn-tf" onclick="changeInterval(5, this)">5m</button>
-                <button class="btn-tf" onclick="changeInterval(15, this)">15m</button>
+                <button class="btn-tf btn-interval active" id="btn-1m" onclick="changeInterval(1, this)">1m</button>
+                <button class="btn-tf btn-interval" onclick="changeInterval(5, this)">5m</button>
+                <button class="btn-tf btn-interval" onclick="changeInterval(15, this)">15m</button>
             </div>
 
-            <div class="controls-group">
-                <button class="btn-tf active" onclick="setColorMode('standard', this)">🔴🟢 Стандарт</button>
-                <button class="btn-tf" onclick="setColorMode('solid', this)">🔵🟢 Суцільні</button>
-            </div>
+            <select class="custom-select" onchange="setColorMode(this.value)">
+                <option value="standard">Свічки: Стандарт</option>
+                <option value="solid">Свічки: Суцільні</option>
+            </select>
         </div>
         
         <div class="price-container">
             <div class="price-box"><span id="name-ex1" style="font-size:0.8em; color:#848e9c;">Ex1</span> <span class="price-ex1" id="price-ex1">---</span></div>
+            <div class="spread-badge" id="live-spread">0.00%</div>
             <div class="price-box"><span id="name-ex2" style="font-size:0.8em; color:#848e9c;">Ex2</span> <span class="price-ex2" id="price-ex2">---</span></div>
         </div>
         

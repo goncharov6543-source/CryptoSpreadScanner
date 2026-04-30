@@ -130,7 +130,7 @@ ipcMain.on('open-live-window', (event, data) => {
     liveUrl.searchParams.append('ex2', ex2);
 
     liveWin.loadURL(liveUrl.href);
-
+    liveWin.maximize();
     liveWin.webContents.openDevTools();
 
     liveWin.on('closed', () => {

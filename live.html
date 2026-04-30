@@ -24,19 +24,23 @@
         .dot-red { background-color: #e74c3c; box-shadow: 0 0 8px rgba(231, 76, 60, 0.8); }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
 
-        /* Макет 60/40 */
-        .main-layout { display: flex; flex: 1; height: 0; }
+        /* Макет 60/40 з повзунком */
+        .main-layout { display: flex; flex: 1; height: 0; width: 100%; }
         
         /* 60% Графік */
-        #chart-wrapper { width: 60%; height: 100%; border-right: 1px solid #2b3139; position: relative; display: flex; flex-direction: column;}
-        .prices-overlay { display: flex; gap: 30px; padding: 10px 20px; font-size: 1.2em; font-weight: bold; background: #0b0e11; border-bottom: 1px solid #2b3139;}
+        #chart-wrapper { width: 60%; height: 100%; display: flex; flex-direction: column; min-width: 20%; }
+        .prices-overlay { display: flex; gap: 30px; padding: 10px 20px; font-size: 1.2em; font-weight: bold; background: #0b0e11; border-bottom: 1px solid #2b3139; flex-shrink: 0;}
         .price-box { display: flex; align-items: center; gap: 8px; }
         .price-ex1 { color: #00d67c; } 
         .price-ex2 { color: #2962FF; }
         #chart-container { flex: 1; width: 100%; position: relative; }
 
+        /* СПЛІТТЕР (Повзунок зміни розміру) */
+        #resizer { width: 6px; background: #1e2329; cursor: col-resize; z-index: 10; transition: background 0.2s; border-left: 1px solid #2b3139; border-right: 1px solid #2b3139; flex-shrink: 0; }
+        #resizer:hover, #resizer:active { background: #3498db; }
+
         /* 40% Стакани */
-        #ob-wrapper { width: 40%; height: 100%; display: flex; }
+        #ob-wrapper { flex: 1; height: 100%; display: flex; min-width: 20%; }
         .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; background: #0b0e11; border-right: 1px solid #2b3139; box-sizing: border-box;}
         .ob-header { text-align: center; padding: 8px; background: #161a1e; font-weight: bold; color: #848e9c; border-bottom: 1px solid #2b3139; font-size: 0.9em;}
         .ob-mid { text-align: center; padding: 10px; font-size: 1.2em; font-weight: bold; background: #161a1e; border-top: 1px solid #2b3139; border-bottom: 1px solid #2b3139;}
@@ -90,15 +94,16 @@
             <div id="chart-container"></div>
         </div>
         
+        <!-- НАШ НОВИЙ ПОВЗУНОК -->
+        <div id="resizer"></div>
+        
         <div id="ob-wrapper">
-            <!-- Стакан Біржі 1 -->
             <div class="ob-col">
                 <div class="ob-header" id="ob-title-1">Exchange 1</div>
                 <div class="ob-section asks" id="ob-asks-1"></div>
                 <div class="ob-mid ob-mid-ex1" id="ob-mid-1">---</div>
                 <div class="ob-section bids" id="ob-bids-1"></div>
             </div>
-            <!-- Стакан Біржі 2 -->
             <div class="ob-col" style="border-right: none;">
                 <div class="ob-header" id="ob-title-2">Exchange 2</div>
                 <div class="ob-section asks" id="ob-asks-2"></div>

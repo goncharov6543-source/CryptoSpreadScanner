@@ -62,10 +62,41 @@ const series2 = chart.addCandlestickSeries({
     wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
 });
 
+// Авторесайз при зміні вікна
 window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
+// === ЛОГІКА ЗМІНИ РОЗМІРІВ (Спліттер) ===
+const resizer = document.getElementById('resizer');
+const chartWrapper = document.getElementById('chart-wrapper');
+let isResizing = false;
+
+resizer.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    document.body.style.userSelect = 'none'; // Щоб текст не виділявся при перетягуванні
+});
+
+document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+    const totalWidth = document.body.clientWidth;
+    let newWidthPct = (e.clientX / totalWidth) * 100;
+    
+    // Ліміти: від 20% до 80% (щоб не зламати вікно повністю)
+    if (newWidthPct < 20) newWidthPct = 20;
+    if (newWidthPct > 80) newWidthPct = 80;
+    
+    chartWrapper.style.width = newWidthPct + '%';
+    // Динамічно оновлюємо розмір графіка під час перетягування
+    chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+});
+
+document.addEventListener('mouseup', () => {
+    isResizing = false;
+    document.body.style.userSelect = 'auto';
+});
+
+// Кольори
 window.setColorMode = function(mode) {
     if (mode === 'solid') {
         series1.applyOptions({ upColor: '#00d67c', downColor: '#00d67c', wickUpColor: '#00d67c', wickDownColor: '#00d67c' });
@@ -207,7 +238,8 @@ function normalizeObData(arr) {
     if (!arr) return [];
     return arr.map(item => {
         if (Array.isArray(item)) return { p: parseFloat(item[0]), q: parseFloat(item[1]) };
-        if (item.p !== undefined && item.s !== undefined) return { p: parseFloat(item.p), q: parseFloat(item.s) }; // Gate
+        if (item.p !== undefined && item.s !== undefined) return { p: parseFloat(item.p), q: parseFloat(item.s) }; 
+        if (item.price !== undefined && item.size !== undefined) return { p: parseFloat(item.price), q: parseFloat(item.size) };
         return { p: 0, q: 0 };
     });
 }
@@ -232,7 +264,6 @@ function updateObState(exIndex, type, asksRaw, bidsRaw) {
         });
     }
 
-    // Сортуємо: Аски (продаж) по зростанню, Біди (купівля) по спаданню
     obState[exIndex].asks.sort((a, b) => a.p - b.p);
     obState[exIndex].bids.sort((a, b) => b.p - a.p);
 
@@ -243,7 +274,6 @@ function renderOrderBook(exIndex) {
     const asksContainer = document.getElementById(`ob-asks-${exIndex}`);
     const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
 
-    // Беремо топ-15 рівнів (аски перевертаємо, щоб найдорожчий був зверху)
     const asks = obState[exIndex].asks.slice(0, 15).reverse();
     const bids = obState[exIndex].bids.slice(0, 15);
 
@@ -304,11 +334,13 @@ function connectExchange(exIndex, exName, symbol) {
         } else if (exName === 'Gate.io') {
             const time = Math.floor(Date.now()/1000);
             ws.send(JSON.stringify({ time: time, channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-            ws.send(JSON.stringify({ time: time, channel: 'futures.order_book_update', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
+            // Виправлений канал стакана Gate.io
+            ws.send(JSON.stringify({ time: time, channel: 'futures.order_book', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "0"] }));
         } else if (exName === 'Gate.io Spot') {
             const time = Math.floor(Date.now()/1000);
             ws.send(JSON.stringify({ time: time, channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-            ws.send(JSON.stringify({ time: time, channel: 'spot.order_book_update', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
+            // Виправлений канал стакана Gate.io Spot
+            ws.send(JSON.stringify({ time: time, channel: 'spot.order_book', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
         } else if (exName === 'MEXC') {
             ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
@@ -343,11 +375,10 @@ function connectExchange(exIndex, exName, symbol) {
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
                 updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
             }
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book_update') && data.result) {
-                // Gate.io update payload
-                const asks = data.result.asks || (data.result.a || []);
-                const bids = data.result.bids || (data.result.b || []);
-                updateObState(exIndex, 'delta', asks, bids);
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) {
+                const asks = data.result.asks || data.result.a || [];
+                const bids = data.result.bids || data.result.b || [];
+                updateObState(exIndex, 'snapshot', asks, bids); // order_book 20 повертає снепшот
             }
             else if (exName === 'MEXC' && data.channel === 'push.depth') {
                 updateObState(exIndex, 'delta', data.data.asks, data.data.bids);

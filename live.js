@@ -2,9 +2,9 @@ const axios = require('axios');
 
 // 1. Отримуємо параметри
 const urlParams = new URLSearchParams(window.location.search);
-const symbol = urlParams.get('symbol'); 
-const rawEx1Name = urlParams.get('ex1');   
-const rawEx2Name = urlParams.get('ex2');   
+const symbol = urlParams.get('symbol');
+const rawEx1Name = urlParams.get('ex1');
+const rawEx2Name = urlParams.get('ex2');
 
 function formatExName(name) {
     return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
@@ -17,16 +17,14 @@ document.getElementById('pair-title').innerText = symbol;
 document.getElementById('name-ex1').innerText = ex1NameFormat;
 document.getElementById('name-ex2').innerText = ex2NameFormat;
 
-// Правильне форматування для дуже малих цін (щоб не відрізало нулі)
 function formatPrice(p) {
     if (!p || isNaN(p)) return '---';
     const num = parseFloat(p);
-    if (num < 0.0001) return num.toFixed(10).replace(/\.?0+$/, ''); 
+    if (num < 0.0001) return num.toFixed(10).replace(/\.?0+$/, '');
     if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
-// Функція для визначення мінімального кроку сітки на графіку (для дрібних монет)
 function getMinMove(price) {
     if (!price) return 0.01;
     if (price < 0.00001) return 0.000000001;
@@ -54,19 +52,33 @@ const series1 = chart.addCandlestickSeries({
 });
 
 const series2 = chart.addCandlestickSeries({
-    upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, 
+    upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false,
     wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
 });
 
-// МАГІЯ: Невидима лінія, яка буде тримати віджет спреду рівно по центру між цінами
+// Глобальні змінні для цін
+let currentP1 = null;
+let currentP2 = null;
+
+// Невидима лінія для віджета спреду у відсотках
 const spreadSeries = chart.addLineSeries({
-    color: '#f0b90b', // Золота тоненька лінія
-    lineWidth: 1,
-    lineStyle: 3, // Пунктирна (Dashed)
+    color: 'rgba(0, 0, 0, 0)', // Повністю прозора лінія
+    lineWidth: 0,
     crosshairMarkerVisible: false,
-    priceLineVisible: false, // Відключаємо довгу лінію ціни
-    lastValueVisible: true,  // Показуємо ТІЛЬКИ плашку на осі
-    title: 'Спред'
+    priceLineVisible: false,
+    lastValueVisible: true,
+    title: 'Спред',
+    priceFormat: {
+        type: 'custom',
+        minMove: 0.0001,
+        formatter: () => {
+            if (currentP1 && currentP2 && currentP1 > 0) {
+                const spread = ((currentP2 - currentP1) / currentP1) * 100;
+                return spread.toFixed(2) + '%';
+            }
+            return '0.00%';
+        }
+    }
 });
 
 window.addEventListener('resize', () => {
@@ -88,28 +100,17 @@ let lastCandle1 = null;
 let lastCandle2 = null;
 let currentIntervalMins = 1;
 
-let currentP1 = null;
-let currentP2 = null;
-
-function updateLiveSpread() {
-    if (currentP1 && currentP2 && currentP1 > 0) {
-        const spread = ((currentP2 - currentP1) / currentP1) * 100;
-        const spreadStr = spread.toFixed(2) + '%';
-        document.getElementById('live-spread').innerText = spreadStr;
-    }
-}
-
 // Перемикання таймфреймів з перезавантаженням історії
 window.changeInterval = async function(mins, btnElement) {
     document.querySelectorAll('.btn-interval').forEach(btn => btn.classList.remove('active'));
     if(btnElement) btnElement.classList.add('active');
-    
+
     currentIntervalMins = mins;
-    
+
     series1.setData([]);
     series2.setData([]);
     spreadSeries.setData([]);
-    
+
     document.getElementById('price-ex1').innerText = 'Завантаження...';
     document.getElementById('price-ex2').innerText = 'Завантаження...';
 
@@ -126,20 +127,6 @@ window.changeInterval = async function(mins, btnElement) {
     const customPriceFormat = { type: 'custom', minMove: minMove, formatter: p => formatPrice(p) };
     series1.applyOptions({ priceFormat: customPriceFormat });
     series2.applyOptions({ priceFormat: customPriceFormat });
-    
-    // Формат для центрального віджета спреду (щоб він показував %)
-    spreadSeries.applyOptions({ 
-        priceFormat: { 
-            type: 'custom', minMove: minMove, 
-            formatter: () => {
-                if (currentP1 && currentP2 && currentP1 > 0) {
-                    const spread = ((currentP2 - currentP1) / currentP1) * 100;
-                    return spread.toFixed(2) + '%';
-                }
-                return '';
-            }
-        } 
-    });
 
     if (hist1.length > 0) {
         series1.setData(hist1);
@@ -153,8 +140,8 @@ window.changeInterval = async function(mins, btnElement) {
         currentP2 = lastCandle2.close;
         document.getElementById('price-ex2').innerText = formatPrice(currentP2);
     }
-    
-    // Розраховуємо середню лінію для історії (щоб лінія спреду була правильною)
+
+    // Розраховуємо середню лінію для історії
     let spreadData = [];
     let h1Map = {};
     hist1.forEach(d => h1Map[d.time] = d.close);
@@ -164,8 +151,6 @@ window.changeInterval = async function(mins, btnElement) {
         }
     });
     spreadSeries.setData(spreadData);
-    
-    updateLiveSpread();
 };
 
 // ==========================================
@@ -175,8 +160,8 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    const limit = 240; // 4 години історії для 1m
-    
+    const limit = 240; 
+
     const bInterval = `${intervalMins}m`;
     const bybInterval = `${intervalMins}`;
     const bitgetSpotInt = `${intervalMins}min`;
@@ -199,14 +184,14 @@ async function fetchHistory(exName, symbol, intervalMins) {
         else if (ex === 'Gate.io') {
             if (isSpot) data = r.data.map(k => ({ time: parseInt(k[0]), open: parseFloat(k[5]), high: parseFloat(k[3]), low: parseFloat(k[4]), close: parseFloat(k[2]) }));
             else data = r.data.map(k => ({ time: parseInt(k.t), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c) }));
-        } 
+        }
         else if (ex === 'Bitget') data = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
         else if (ex === 'MEXC') {
             if (isSpot) data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
             else if (r.data.data && r.data.data.time) {
                 const d = r.data.data;
                 for(let i=0; i<d.time.length; i++) data.push({ time: parseInt(d.time[i]), open: parseFloat(d.open[i]), high: parseFloat(d.high[i]), low: parseFloat(d.low[i]), close: parseFloat(d.close[i]) });
-                data = data.slice(-limit); 
+                data = data.slice(-limit);
             }
         }
 
@@ -224,12 +209,12 @@ async function fetchHistory(exName, symbol, intervalMins) {
 }
 
 // ==========================================
-// ЛОГІКА ДОДАВАННЯ ТІКУ 
+// ЛОГІКА ДОДАВАННЯ ТІКУ
 // ==========================================
 function updateLiveCandle(exIndex, price) {
     const intervalMs = currentIntervalMins * 60 * 1000;
     const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000);
-    
+
     let lastCandle = exIndex === 1 ? lastCandle1 : lastCandle2;
     let series = exIndex === 1 ? series1 : series2;
 
@@ -252,12 +237,10 @@ function updateLiveCandle(exIndex, price) {
         lastCandle2 = lastCandle;
         currentP2 = price;
     }
-    
-    updateLiveSpread(); 
 
-    try { 
-        series.update(lastCandle); 
-        
+    try {
+        series.update(lastCandle);
+
         // Магія: оновлюємо центральний віджет, щоб він завжди був по центру!
         if (lastCandle1 && lastCandle2) {
             spreadSeries.update({
@@ -284,9 +267,9 @@ function updateStatusDot() {
 }
 
 function connectExchange(exIndex, exName, symbol) {
-    const cleanSym = symbol.replace('_', '').toUpperCase(); 
+    const cleanSym = symbol.replace('_', '').toUpperCase();
     let wsUrl = '';
-    
+
     if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/ws/${cleanSym.toLowerCase()}@ticker`;
     else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/ws/${cleanSym.toLowerCase()}@ticker`;
     else if (exName === 'Bybit') wsUrl = 'wss://stream.bybit.com/v5/public/linear';
@@ -318,12 +301,12 @@ function connectExchange(exIndex, exName, symbol) {
             const data = JSON.parse(event.data);
             let price = null;
 
-            if (exName.startsWith('Binance') && data.c) price = parseFloat(data.c); 
+            if (exName.startsWith('Binance') && data.c) price = parseFloat(data.c);
             else if (exName.startsWith('Bybit') && data.data && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
             else if (exName === 'Gate.io' && data.event === 'update' && data.result && data.result.length > 0) price = parseFloat(data.result[0].last);
             else if (exName === 'Gate.io Spot' && data.event === 'update' && data.result && data.result.last) price = parseFloat(data.result.last);
             else if (exName === 'MEXC' && data.channel === 'push.ticker' && data.data) price = parseFloat(data.data.lastPrice);
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p); 
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p);
             else if (exName.startsWith('Bitget') && data.data && data.data.length > 0 && data.data[0].lastPr) price = parseFloat(data.data[0].lastPr);
 
             if (price) updateLiveCandle(exIndex, price);
@@ -340,7 +323,7 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// ЗАПУСК 
+// ЗАПУСК
 // ==========================================
 async function initLive() {
     await window.changeInterval(1, document.getElementById('btn-1m'));

@@ -152,6 +152,15 @@ function playAlert() {
     audioAlert.play().catch(e => {});
 }
 
+// Форматування малих цін для історії і позицій
+function formatSmallPrice(p) {
+    if (p === null || p === undefined || isNaN(p)) return '0.00';
+    const num = parseFloat(p);
+    if (num < 0.0001) return num.toFixed(10).replace(/\.?0+$/, '');
+    if (num < 1) return num.toFixed(6).replace(/\.?0+$/, '');
+    return num.toFixed(4).replace(/\.?0+$/, '');
+}
+
 // --- БАЛАНСИ ТА РЕАЛЬНІ API ---
 async function updateBalancesUI() {
     const btn = document.getElementById('btn-ex-status');
@@ -342,7 +351,6 @@ async function loadTop10Patterns(top10) {
     let count = 0;
     for (let item of top10) {
         if (!patternStats[item.cleanSymbol]) {
-            patternStats[item.cleanSymbol] = { isReady: false };
             await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
             await new Promise(r => setTimeout(r, 800)); 
         }
@@ -365,8 +373,8 @@ async function loadNewCoinsPatternsBackground(arbList) {
     if (isBackgroundLoading) return;
     isBackgroundLoading = true;
     for (let item of arbList) {
-        if (!patternStats[item.cleanSymbol]) {
-            patternStats[item.cleanSymbol] = { isReady: false };
+        const stat = patternStats[item.cleanSymbol];
+        if (!stat || (!stat.isReady && stat.status !== 'error' && stat.status !== 'loading')) {
             await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
             await new Promise(r => setTimeout(r, 1000));
             if (document.getElementById('tab-2').classList.contains('active')) {
@@ -377,6 +385,16 @@ async function loadNewCoinsPatternsBackground(arbList) {
     }
     isBackgroundLoading = false;
 }
+
+// Функція повторної спроби при помилці завантаження
+window.retryPattern = function(symbol, buyEx, sellEx) {
+    if (patternStats[symbol]) {
+        patternStats[symbol].status = 'loading';
+        patternStats[symbol].startTime = Date.now();
+    }
+    window.processSidebar();
+    calculateCoinPattern(symbol, buyEx, sellEx);
+};
 
 // --- СЛАЙДЕР ТА МЕНЮ ---
 const numTabs = 4;
@@ -576,7 +594,7 @@ async function fetchMarketData() {
         if(!settings.blacklist) settings.blacklist = []; 
 
         let positiveFunding = [], negativeFunding = [], priceArbOpps = [];
-        let currentCycleSeen = new Set(); // Відслідковуємо монети поточного циклу для подвійної перевірки спайку
+        let currentCycleSeen = new Set(); 
 
         Object.keys(crossData).forEach(cleanSymbol => {
             const exMap = crossData[cleanSymbol];
@@ -619,7 +637,6 @@ async function fetchMarketData() {
                             if (pairFilter === 'FUT' && typeTag !== 'FUT ↔ FUT') continue;
                             if (pairFilter === 'SPOT' && typeTag !== 'SPOT 🟢 ↔ FUT 🔴') continue;
 
-                            // Механіка подвійної перевірки спайку (req 5)
                             const arbKey = `${cleanSymbol}_${ex1N}_${ex2N}`;
                             currentCycleSeen.add(arbKey);
 
@@ -629,7 +646,6 @@ async function fetchMarketData() {
                                 pendingArbOpps[arbKey]++;
                             }
 
-                            // Якщо монета пройшла 3 перевірки підряд (перша + 2 додаткові)
                             if (pendingArbOpps[arbKey] >= 3) {
                                 priceArbOpps.push({
                                     cleanSymbol, spreadPct: spread, typeTag: typeTag,
@@ -656,7 +672,6 @@ async function fetchMarketData() {
             }
         });
 
-        // Очищення тих монет, які пропали і не пройшли подвійну перевірку
         Object.keys(pendingArbOpps).forEach(key => {
             if (!currentCycleSeen.has(key)) {
                 delete pendingArbOpps[key];
@@ -672,7 +687,6 @@ async function fetchMarketData() {
 
         currentArbOpps = finalArb;
 
-        // --- ЛОГІКА ЗАВАНТАЖЕННЯ АНАЛІЗУ СПРЕДІВ ---
         if (document.getElementById('tab-2').classList.contains('active') && !top10LoadingDone && !isTop10Loading && finalArb.length > 0) {
             loadTop10Patterns(finalArb.slice(0, 10));
         } else if (top10LoadingDone) {
@@ -696,7 +710,7 @@ async function fetchMarketData() {
     } catch (error) { document.getElementById('global-status').innerHTML = `🔴 OFFLINE`; }
 }
 
-// --- РЕНДЕР ВІДКРИТИХ ПОЗИЦІЙ (СПРОЩЕНО) ---
+// --- РЕНДЕР ВІДКРИТИХ ПОЗИЦІЙ ---
 async function renderPositionsTab() {
     const loader = document.getElementById('pos-loader');
     const container = document.getElementById('pos-content');
@@ -736,14 +750,14 @@ async function renderPositionsTab() {
             arr.forEach(p => {
                 const col = p.side === 'Long' ? 'color:#00d67c;' : 'color:#e74c3c;';
                 exSides.push(`<span style="font-weight:bold;">${p.exchange}</span> (<span style="${col}">${p.side} ${p.leverage}x</span>)`);
-                prices.push(`$${p.entryPrice.toFixed(4)}`);
+                prices.push(`$${formatSmallPrice(p.entryPrice)}`);
             });
 
             let spreadStr = '-';
             if(arr.length >= 2) {
                 const maxP = Math.max(arr[0].entryPrice, arr[1].entryPrice);
                 const minP = Math.min(arr[0].entryPrice, arr[1].entryPrice);
-                spreadStr = (((maxP - minP) / minP) * 100).toFixed(2) + '%';
+                if (minP > 0) spreadStr = (((maxP - minP) / minP) * 100).toFixed(2) + '%';
             }
 
             html += `
@@ -868,7 +882,7 @@ function renderHistoryTab() {
                 <div class="history-detail-item">
                     <div style="flex: 1;"><span>Біржа:</span> <b>${leg.exchange}</b></div>
                     <div style="flex: 1; text-align: center;"><span>Сторона:</span> <b style="${leg.side==='Long'?'color:#00d67c':'color:#e74c3c'}">${leg.side} ${leg.leverage}x</b></div>
-                    <div style="flex: 1; text-align: center;"><span>Ціна входу:</span> <b>$${leg.entryPrice.toFixed(4)}</b></div>
+                    <div style="flex: 1; text-align: center;"><span>Ціна входу:</span> <b>$${formatSmallPrice(leg.entryPrice)}</b></div>
                     <div style="flex: 1; text-align: right;"><span>PNL:</span> <b class="${legPnlClass}">${legSign}$${leg.finalPnl.toFixed(4)}</b></div>
                 </div>
             `;
@@ -1054,7 +1068,6 @@ window.toggleWatchlist = function(cleanSymbol, buyEx, sellEx) {
     fetchMarketData();
 };
 
-
 function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellData, listContext, passedTypeTag = null) {
     const maxVol = Math.max(buyData.vol, sellData.vol);
     const sStr = spread.toFixed(2) + '%';
@@ -1105,27 +1118,23 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
     }
 
     let avgSpreadHtml = '';
-    let spreadTooltipHtml = '';
     
-    // Формування візуалу середнього спреду та вспливаючого тултіпу
-    if (patternStats[cleanSymbol] && patternStats[cleanSymbol].isReady) {
+    // Формування візуалу середнього спреду з урахуванням помилок
+    if (patternStats[cleanSymbol]) {
         const p = patternStats[cleanSymbol];
-        avgSpreadHtml = `<div style="font-size: 0.85em; color: #f0b90b; margin-top: 6px; font-weight: bold; border-top: 1px dashed rgba(240, 185, 11, 0.3); padding-top: 4px;" title="Середній спред за 12 годин">~ ${p.avg.toFixed(2)}%</div>`;
-        
-        spreadTooltipHtml = `
-        <div class="tooltip-content" style="width: max-content; padding: 15px;">
-            <div style="margin-bottom: 10px; color: #f0b90b; text-align: center; border-bottom: 1px solid #3c444f; padding-bottom: 6px; font-weight: bold;">Деталі Спреду (12 год)</div>
-            <div class="tooltip-row"><span class="tooltip-ex">Поточний:</span><span class="tooltip-val" style="color:#3498db">${spread.toFixed(2)}%</span></div>
-            <div class="tooltip-row"><span class="tooltip-ex">Середній:</span><span class="tooltip-val" style="color:#f0b90b">${p.avg.toFixed(2)}%</span></div>
-            <div class="tooltip-row"><span class="tooltip-ex">Максимум:</span><span class="tooltip-val" style="color:#00d67c">${p.max.toFixed(2)}%</span></div>
-            <div class="tooltip-row"><span class="tooltip-ex">Мінімум:</span><span class="tooltip-val" style="color:#e74c3c">${p.min.toFixed(2)}%</span></div>
-        </div>`;
+        if (p.status === 'loading' && (Date.now() - p.startTime > 60000)) {
+            p.status = 'error';
+        }
+
+        if (p.status === 'ready' && p.isReady) {
+            avgSpreadHtml = `<div style="font-size: 0.85em; color: #f0b90b; margin-top: 6px; font-weight: bold; border-top: 1px dashed rgba(240, 185, 11, 0.3); padding-top: 4px;" title="Середній спред за 12 годин">~ ${p.avg.toFixed(2)}%</div>`;
+        } else if (p.status === 'error') {
+            avgSpreadHtml = `<div style="font-size: 0.75em; color: #e74c3c; margin-top: 6px; border-top: 1px dashed #3c444f; padding-top: 4px; cursor: pointer;" onclick="retryPattern('${cleanSymbol}', '${buyEx}', '${sellEx}')" title="Натисніть, щоб спробувати ще раз">⚠️ Помилка (Оновити)</div>`;
+        } else {
+            avgSpreadHtml = `<div style="font-size: 0.75em; color: #848e9c; margin-top: 6px; border-top: 1px dashed #3c444f; padding-top: 4px;" title="Рахуємо історію...">⏳ аналіз...</div>`;
+        }
     } else {
         avgSpreadHtml = `<div style="font-size: 0.75em; color: #848e9c; margin-top: 6px; border-top: 1px dashed #3c444f; padding-top: 4px;" title="Рахуємо історію...">⏳ аналіз...</div>`;
-        spreadTooltipHtml = `
-        <div class="tooltip-content" style="width: max-content; padding: 15px; text-align:center;">
-            <span style="color:#848e9c;">⏳ Збираю історію...</span>
-        </div>`;
     }
 
     return `
@@ -1140,11 +1149,10 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                     <span class="vol-badge" style="width: max-content; display: inline-block; margin-bottom: 4px;">Vol: ${formatCurrency(maxVol)}</span>
                     <div style="background:#2b3139; color:#f0b90b; font-size:0.7em; padding:2px 8px; border-radius:4px; white-space:nowrap; border: 1px solid #f0b90b; font-weight:bold; width: max-content;">${typeTag}</div>
                 </div>
-                <div class="arb-spread-box tooltip-container">
+                <div class="arb-spread-box">
                     <div style="font-size: 0.75em; color: #848e9c; margin-top:0px;">Спред Ціни:</div>
                     <div class="arb-spread-val">${sStr}</div>
                     ${avgSpreadHtml}
-                    ${spreadTooltipHtml}
                 </div>
             </div>
             <div>
@@ -1155,7 +1163,7 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                         <div class="arb-funding-text">${bRStrHTML}</div>
                     </div>
                     <div class="arb-trade-box-right">
-                        <div class="arb-price green">$${buyData.ask || buyData.bid}</div>
+                        <div class="arb-price green">$${formatSmallPrice(buyData.ask || buyData.bid)}</div>
                         <span class="arb-link" onclick="openLinks('${bLink}')">Відкрити ↗</span>
                     </div>
                 </div>
@@ -1166,22 +1174,26 @@ function generateArbCardHtml(cleanSymbol, spread, buyEx, buyData, sellEx, sellDa
                         <div class="arb-funding-text">${sRStrHTML}</div>
                     </div>
                     <div class="arb-trade-box-right">
-                        <div class="arb-price red">$${sellData.bid || sellData.ask}</div>
+                        <div class="arb-price red">$${formatSmallPrice(sellData.bid || sellData.ask)}</div>
                         <span class="arb-link" onclick="openLinks('${sLink}')">Відкрити ↗</span>
                     </div>
                 </div>
             </div>
             <div style="display: flex; gap: 10px; margin-top: auto;">
-                <button class="btn-chart" style="margin-top:0; background: #27ae60;" onclick="openLiveWindow('${cleanSymbol}', '${buyEx}', '${sellEx}')">🟢 Live</button>
-                <button class="btn-chart" style="margin-top:0;" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Спред</button>
+                <button class="btn-chart" style="margin-top:0; background: #27ae60;" onclick="openLiveWindow('${cleanSymbol}', '${buyEx}', '${sellEx}')">🟢 Live Позиція</button>
+                <button class="btn-chart" style="margin-top:0;" onclick="openChartWindow('${cleanSymbol}', '${sellEx}', '${buyEx}')">📊 Історія спреду</button>
             </div>
         </div>
     `;
 }
 
-window.openLiveWindow = function(symbol, ex1, ex2) {
-    // Відправляємо команду в main.js відкрити нове вікно
-    ipcRenderer.send('open-live-window', { symbol, ex1, ex2 });
+window.retryPattern = function(symbol, buyEx, sellEx) {
+    if (patternStats[symbol]) {
+        patternStats[symbol].status = 'loading';
+        patternStats[symbol].startTime = Date.now();
+    }
+    window.processSidebar();
+    calculateCoinPattern(symbol, buyEx, sellEx);
 };
 
 function generateEmptyCard(cleanSymbol, context) {
@@ -1342,6 +1354,10 @@ chartServer.listen(chartPort);
 
 window.openChartWindow = function(symbol, ex1, ex2) {
     shell.openExternal(`http://localhost:${chartPort}/chart?symbol=${symbol}&ex1=${ex1}&ex2=${ex2}&days=0.5`);
+};
+
+window.openLiveWindow = function(symbol, ex1, ex2) {
+    ipcRenderer.send('open-live-window', { symbol, ex1, ex2 });
 };
 
 async function getKlineDataChunked(exName, sym, totalCandles, onProgress) {
@@ -1619,13 +1635,21 @@ function generateChartPageHTML(symbol, ex1, ex2, days, res) {
 
 // --- ФОРМУВАННЯ ПАТЕРНУ ДЛЯ ВОЧЛІСТУ ---
 async function calculateCoinPattern(symbol, buyEx, sellEx) {
+    if (!patternStats[symbol]) patternStats[symbol] = {};
+    patternStats[symbol].status = 'loading';
+    patternStats[symbol].startTime = Date.now();
+    patternStats[symbol].buyEx = buyEx;
+    patternStats[symbol].sellEx = sellEx;
+
+    if (document.getElementById('tab-2').classList.contains('active')) window.processSidebar();
+
     try {
         const [d1, d2] = await Promise.all([
             getKlineDataChunked(buyEx, symbol, 720, () => {}),
             getKlineDataChunked(sellEx, symbol, 720, () => {})
         ]);
         
-        if (!d1 || !d2 || d1.length < 60) return;
+        if (!d1 || !d2 || d1.length < 60) throw new Error("Немає достатньо даних");
 
         const minLength = Math.min(d1.length, d2.length);
         const s1 = d1.slice(-minLength);
@@ -1644,10 +1668,12 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
             if (sp < min) min = sp;
         }
 
-        const avg = sum / minLength;
-
-        // Зберігаємо масив spread, щоб потім швидко перераховувати
-        patternStats[symbol] = { avg, max, min, isReady: true, spreads, buyEx, sellEx };
+        patternStats[symbol].avg = sum / minLength;
+        patternStats[symbol].max = max; 
+        patternStats[symbol].min = min;
+        patternStats[symbol].isReady = true; 
+        patternStats[symbol].status = 'ready';
+        patternStats[symbol].spreads = spreads;
         
         if (document.getElementById('tab-2').classList.contains('active')) {
             window.processSidebar();
@@ -1655,7 +1681,8 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
         
     } catch(e) {
         console.log(`Помилка розрахунку патерну для ${symbol}`, e.message);
-        delete patternStats[symbol]; // Видаляємо щоб спробувати пізніше
+        if (patternStats[symbol]) patternStats[symbol].status = 'error';
+        if (document.getElementById('tab-2').classList.contains('active')) window.processSidebar();
     }
 }
 

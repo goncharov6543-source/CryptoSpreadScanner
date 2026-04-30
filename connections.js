@@ -1,6 +1,15 @@
 const axios = require('axios');
 const crypto = require('crypto');
 
+async function getSpotTickers(exchange) {
+    try {
+        if (exchange === 'Binance') return (await axios.get('https://api.binance.com/api/v3/ticker/price')).data.reduce((acc, t) => { acc[t.symbol] = parseFloat(t.price); return acc; }, {});
+        if (exchange === 'MEXC') return (await axios.get('https://api.mexc.com/api/v3/ticker/price')).data.reduce((acc, t) => { acc[t.symbol] = parseFloat(t.price); return acc; }, {});
+        if (exchange === 'Gate.io') return (await axios.get('https://api.gateio.ws/api/v4/spot/tickers')).data.reduce((acc, t) => { acc[t.currency_pair] = parseFloat(t.last); return acc; }, {});
+    } catch(e) { console.error("Помилка завантаження тікерів:", exchange, e.message); }
+    return {};
+}
+
 async function fetchBalances(apiKeys) {
     let totalBal = 0;
     let details = [];
@@ -22,8 +31,14 @@ async function fetchBalances(apiKeys) {
                     const q = `timestamp=${ts}`;
                     const sig = crypto.createHmac('sha256', secret).update(q).digest('hex');
                     const resSpot = await axios.get(`https://api.mexc.com/api/v3/account?${q}&signature=${sig}`, { headers: { 'X-MEXC-APIKEY': key } });
-                    const usdtAsset = resSpot.data.balances.find(a => a.asset === 'USDT');
-                    if (usdtAsset) balance += parseFloat(usdtAsset.free) + parseFloat(usdtAsset.locked);
+                    const spotTickers = await getSpotTickers('MEXC');
+                    resSpot.data.balances.forEach(b => {
+                        const amt = parseFloat(b.free) + parseFloat(b.locked);
+                        if (amt > 0) {
+                            if (b.asset === 'USDT' || b.asset === 'USDC') balance += amt;
+                            else if (spotTickers[b.asset + 'USDT']) balance += amt * spotTickers[b.asset + 'USDT'];
+                        }
+                    });
                     isSuccess = true;
                 } catch(e) { errMessage = e.response?.data?.msg || "Помилка MEXC Spot"; }
 
@@ -64,8 +79,14 @@ async function fetchBalances(apiKeys) {
                     const resSpot = await axios.get(`https://api.gateio.ws${urlPathSpot}`, {
                         headers: { 'KEY': key, 'Timestamp': ts, 'SIGN': sigSpot, 'Accept': 'application/json' }
                     });
-                    const usdtSpot = resSpot.data.find(a => a.currency === 'USDT');
-                    if(usdtSpot) balance += parseFloat(usdtSpot.available || 0) + parseFloat(usdtSpot.locked || 0);
+                    const spotTickers = await getSpotTickers('Gate.io');
+                    resSpot.data.forEach(b => {
+                        const amt = parseFloat(b.available) + parseFloat(b.locked);
+                        if (amt > 0) {
+                            if (b.currency === 'USDT' || b.currency === 'USDC') balance += amt;
+                            else if (spotTickers[b.currency + '_USDT']) balance += amt * spotTickers[b.currency + '_USDT'];
+                        }
+                    });
                     isSuccess = true;
                 } catch(e) { 
                     if(!isSuccess) errMessage = e.response?.data?.message || "Помилка Gate.io Spot"; 
@@ -80,8 +101,14 @@ async function fetchBalances(apiKeys) {
                 
                 try {
                     const resSpot = await axios.get(`https://api.binance.com/api/v3/account?${q}&signature=${sig}`, { headers: { 'X-MBX-APIKEY': key } });
-                    const u = resSpot.data.balances.find(a => a.asset === 'USDT');
-                    if(u) balance += parseFloat(u.free) + parseFloat(u.locked);
+                    const spotTickers = await getSpotTickers('Binance');
+                    resSpot.data.balances.forEach(b => {
+                        const amt = parseFloat(b.free) + parseFloat(b.locked);
+                        if (amt > 0) {
+                            if (b.asset === 'USDT' || b.asset === 'USDC') balance += amt;
+                            else if (spotTickers[b.asset + 'USDT']) balance += amt * spotTickers[b.asset + 'USDT'];
+                        }
+                    });
                     isSuccess = true;
                 } catch(e) {}
 
@@ -143,132 +170,216 @@ async function fetchPositions(apiKeys) {
                 const ts = Date.now();
                 const q = `timestamp=${ts}`;
                 const sig = crypto.createHmac('sha256', secret).update(q).digest('hex');
-                const res = await axios.get(`https://fapi.binance.com/fapi/v2/positionRisk?${q}&signature=${sig}`, { headers: { 'X-MBX-APIKEY': key } });
                 
-                res.data.forEach(p => {
-                    const posAmt = parseFloat(p.positionAmt);
-                    if (posAmt !== 0) {
-                        const entryPrice = parseFloat(p.entryPrice);
-                        const sizeTokens = Math.abs(posAmt);
-                        const sizeUSDT = sizeTokens * entryPrice; 
-                        allPositions.push({
-                            exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
-                            side: posAmt > 0 ? 'Long' : 'Short',
-                            sizeUSDT: sizeUSDT, 
-                            sizeTokens: sizeTokens, 
-                            leverage: parseInt(p.leverage),
-                            entryPrice: entryPrice,
-                            unRealized: parseFloat(p.unRealizedProfit || 0),
-                            realized: 0 
-                        });
-                    }
-                });
+                try {
+                    const res = await axios.get(`https://fapi.binance.com/fapi/v2/positionRisk?${q}&signature=${sig}`, { headers: { 'X-MBX-APIKEY': key } });
+                    res.data.forEach(p => {
+                        const posAmt = parseFloat(p.positionAmt);
+                        if (posAmt !== 0) {
+                            const entryPrice = parseFloat(p.entryPrice);
+                            const sizeTokens = Math.abs(posAmt);
+                            const sizeUSDT = sizeTokens * entryPrice; 
+                            allPositions.push({
+                                exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
+                                side: posAmt > 0 ? 'Long' : 'Short',
+                                sizeUSDT: sizeUSDT, 
+                                sizeTokens: sizeTokens, 
+                                leverage: parseInt(p.leverage),
+                                entryPrice: entryPrice,
+                                unRealized: parseFloat(p.unRealizedProfit || 0),
+                                realized: 0 
+                            });
+                        }
+                    });
+                } catch(e) {}
+
+                try {
+                    const resSpot = await axios.get(`https://api.binance.com/api/v3/account?${q}&signature=${sig}`, { headers: { 'X-MBX-APIKEY': key } });
+                    const spotTickers = await getSpotTickers('Binance');
+                    resSpot.data.balances.forEach(b => {
+                        if (b.asset !== 'USDT' && b.asset !== 'USDC') {
+                            const amt = parseFloat(b.free) + parseFloat(b.locked);
+                            const price = spotTickers[b.asset + 'USDT'] || 0;
+                            const val = amt * price;
+                            if (val > 1) { 
+                                allPositions.push({
+                                    exchange: ex + ' Spot', symbol: b.asset + 'USDT', cleanSymbol: b.asset, side: 'Long',
+                                    sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: price, unRealized: 0, realized: 0
+                                });
+                            }
+                        }
+                    });
+                } catch(e) {}
 
             } else if (ex === 'Bybit') {
                 const ts = Date.now().toString();
                 const qs = 'category=linear&settleCoin=USDT';
                 const sig = crypto.createHmac('sha256', secret).update(ts + key + '5000' + qs).digest('hex');
-                const res = await axios.get(`https://api.bybit.com/v5/position/list?${qs}`, {
-                    headers: { 'X-BAPI-API-KEY': key, 'X-BAPI-TIMESTAMP': ts, 'X-BAPI-SIGN': sig, 'X-BAPI-RECV-WINDOW': '5000' }
-                });
                 
-                if(res.data.retCode === 0 && res.data.result.list) {
-                    res.data.result.list.forEach(p => {
-                        const size = parseFloat(p.size);
-                        if (size !== 0) {
-                            const entryPrice = parseFloat(p.avgPrice);
-                            const sizeTokens = Math.abs(size);
-                            const sizeUSDT = sizeTokens * entryPrice; 
-                            allPositions.push({
-                                exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
-                                side: p.side === 'Buy' ? 'Long' : 'Short',
-                                sizeUSDT: sizeUSDT,
-                                sizeTokens: sizeTokens, 
-                                leverage: parseInt(p.leverage),
-                                entryPrice: entryPrice,
-                                unRealized: parseFloat(p.unrealisedPnl || 0),
-                                realized: parseFloat(p.cumRealisedPnl || 0)
-                            });
-                        }
+                try {
+                    const res = await axios.get(`https://api.bybit.com/v5/position/list?${qs}`, {
+                        headers: { 'X-BAPI-API-KEY': key, 'X-BAPI-TIMESTAMP': ts, 'X-BAPI-SIGN': sig, 'X-BAPI-RECV-WINDOW': '5000' }
                     });
-                }
+                    if(res.data.retCode === 0 && res.data.result.list) {
+                        res.data.result.list.forEach(p => {
+                            const size = parseFloat(p.size);
+                            if (size !== 0) {
+                                const entryPrice = parseFloat(p.avgPrice);
+                                const sizeTokens = Math.abs(size);
+                                const sizeUSDT = sizeTokens * entryPrice; 
+                                allPositions.push({
+                                    exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol,
+                                    side: p.side === 'Buy' ? 'Long' : 'Short',
+                                    sizeUSDT: sizeUSDT,
+                                    sizeTokens: sizeTokens, 
+                                    leverage: parseInt(p.leverage),
+                                    entryPrice: entryPrice,
+                                    unRealized: parseFloat(p.unrealisedPnl || 0),
+                                    realized: parseFloat(p.cumRealisedPnl || 0)
+                                });
+                            }
+                        });
+                    }
+                } catch(e) {}
+
+                try {
+                    const qsSpot = 'accountType=UNIFIED';
+                    const sigSpot = crypto.createHmac('sha256', secret).update(ts + key + '5000' + qsSpot).digest('hex');
+                    const resSpot = await axios.get(`https://api.bybit.com/v5/account/wallet-balance?${qsSpot}`, { headers: { 'X-BAPI-API-KEY': key, 'X-BAPI-TIMESTAMP': ts, 'X-BAPI-SIGN': sigSpot, 'X-BAPI-RECV-WINDOW': '5000' } });
+                    if (resSpot.data.retCode === 0 && resSpot.data.result.list.length > 0) {
+                        resSpot.data.result.list[0].coin.forEach(c => {
+                            if (c.coin !== 'USDT' && c.coin !== 'USDC') {
+                                const amt = parseFloat(c.walletBalance);
+                                const val = parseFloat(c.usdValue);
+                                if (val > 1) {
+                                    allPositions.push({
+                                        exchange: ex + ' Spot', symbol: c.coin + 'USDT', cleanSymbol: c.coin, side: 'Long',
+                                        sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: val/amt, unRealized: 0, realized: 0
+                                    });
+                                }
+                            }
+                        });
+                    }
+                } catch(e) {}
 
             } else if (ex === 'MEXC') {
                 const ts = Date.now().toString();
                 const sig = crypto.createHmac('sha256', secret).update(key + ts).digest('hex');
                 
-                // ФІКС: Отримуємо тікери паралельно з позиціями, щоб прорахувати PNL
-                const [posRes, tickerRes] = await Promise.all([
-                    axios.get('https://contract.mexc.com/api/v1/private/position/open_positions', {
-                        headers: { 'ApiKey': key, 'Request-Time': ts, 'Signature': sig, 'Content-Type': 'application/json' }
-                    }).catch(e => { throw e; }),
-                    axios.get('https://contract.mexc.com/api/v1/contract/ticker').catch(() => ({ data: { data: [] } }))
-                ]);
-                
-                let mexcPrices = {};
-                if (tickerRes.data && tickerRes.data.data) {
-                    tickerRes.data.data.forEach(t => { mexcPrices[t.symbol] = parseFloat(t.lastPrice); });
-                }
-                
-                if(posRes.data && posRes.data.data) {
-                    posRes.data.data.forEach(p => {
-                        if (parseFloat(p.holdVol) > 0) {
-                            const entryPrice = parseFloat(p.holdAvgPrice);
-                            const sizeTokens = parseFloat(p.holdVol);
-                            const sizeUSDT = sizeTokens * entryPrice; 
-                            const side = p.positionType === 1 ? 'Long' : 'Short';
-                            
-                            // Ручний прорахунок PNL, бо MEXC його не віддає
-                            const currentPrice = mexcPrices[p.symbol] || entryPrice;
-                            const manualUnrealized = side === 'Long' 
-                                ? (currentPrice - entryPrice) * sizeTokens 
-                                : (entryPrice - currentPrice) * sizeTokens;
+                try {
+                    const [posRes, tickerRes] = await Promise.all([
+                        axios.get('https://contract.mexc.com/api/v1/private/position/open_positions', {
+                            headers: { 'ApiKey': key, 'Request-Time': ts, 'Signature': sig, 'Content-Type': 'application/json' }
+                        }).catch(e => { throw e; }),
+                        axios.get('https://contract.mexc.com/api/v1/contract/ticker').catch(() => ({ data: { data: [] } }))
+                    ]);
+                    
+                    let mexcPrices = {};
+                    if (tickerRes.data && tickerRes.data.data) {
+                        tickerRes.data.data.forEach(t => { mexcPrices[t.symbol] = parseFloat(t.lastPrice); });
+                    }
+                    
+                    if(posRes.data && posRes.data.data) {
+                        posRes.data.data.forEach(p => {
+                            if (parseFloat(p.holdVol) > 0) {
+                                const entryPrice = parseFloat(p.holdAvgPrice);
+                                const sizeTokens = parseFloat(p.holdVol);
+                                const sizeUSDT = sizeTokens * entryPrice; 
+                                const side = p.positionType === 1 ? 'Long' : 'Short';
+                                
+                                const currentPrice = mexcPrices[p.symbol] || entryPrice;
+                                const manualUnrealized = side === 'Long' 
+                                    ? (currentPrice - entryPrice) * sizeTokens 
+                                    : (entryPrice - currentPrice) * sizeTokens;
 
-                            allPositions.push({
-                                exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol.replace('_', ''),
-                                side: side,
-                                sizeUSDT: sizeUSDT, 
-                                sizeTokens: sizeTokens, 
-                                leverage: parseInt(p.leverage),
-                                entryPrice: entryPrice,
-                                unRealized: manualUnrealized,
-                                realized: parseFloat(p.realised || 0)
-                            });
+                                allPositions.push({
+                                    exchange: ex, symbol: p.symbol, cleanSymbol: p.symbol.replace('_', ''),
+                                    side: side,
+                                    sizeUSDT: sizeUSDT, 
+                                    sizeTokens: sizeTokens, 
+                                    leverage: parseInt(p.leverage),
+                                    entryPrice: entryPrice,
+                                    unRealized: manualUnrealized,
+                                    realized: parseFloat(p.realised || 0)
+                                });
+                            }
+                        });
+                    }
+                } catch(e) {}
+
+                try {
+                    const tsSpot = Date.now(); const qSpot = `timestamp=${tsSpot}`; const sigSpot = crypto.createHmac('sha256', secret).update(qSpot).digest('hex');
+                    const resSpot = await axios.get(`https://api.mexc.com/api/v3/account?${qSpot}&signature=${sigSpot}`, { headers: { 'X-MEXC-APIKEY': key } });
+                    const spotTickers = await getSpotTickers('MEXC');
+                    resSpot.data.balances.forEach(b => {
+                        if (b.asset !== 'USDT' && b.asset !== 'USDC') {
+                            const amt = parseFloat(b.free) + parseFloat(b.locked);
+                            const price = spotTickers[b.asset + 'USDT'] || 0;
+                            const val = amt * price;
+                            if (val > 1) {
+                                allPositions.push({
+                                    exchange: ex + ' Spot', symbol: b.asset + 'USDT', cleanSymbol: b.asset, side: 'Long',
+                                    sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: price, unRealized: 0, realized: 0
+                                });
+                            }
                         }
                     });
-                }
+                } catch(e) {}
 
             } else if (ex === 'Gate.io') {
                 const ts = Math.floor(Date.now() / 1000).toString();
                 const hash = crypto.createHash('sha512').update('').digest('hex');
-                const sigStr = `GET\n/api/v4/futures/usdt/positions\n\n${hash}\n${ts}`;
-                const sig = crypto.createHmac('sha512', secret).update(sigStr).digest('hex');
-                const res = await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/positions`, {
-                    headers: { 'KEY': key, 'Timestamp': ts, 'SIGN': sig, 'Accept': 'application/json' }
-                });
                 
-                res.data.forEach(p => {
-                    const size = parseFloat(p.size);
-                    if (size !== 0) {
-                        const entryPrice = parseFloat(p.entry_price);
-                        const posValue = parseFloat(p.value); 
-                        const sizeUSDT = !isNaN(posValue) ? posValue : (Math.abs(size) * entryPrice);
-                        const sizeTokens = sizeUSDT / entryPrice; 
+                try {
+                    const sigStr = `GET\n/api/v4/futures/usdt/positions\n\n${hash}\n${ts}`;
+                    const sig = crypto.createHmac('sha512', secret).update(sigStr).digest('hex');
+                    const res = await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/positions`, {
+                        headers: { 'KEY': key, 'Timestamp': ts, 'SIGN': sig, 'Accept': 'application/json' }
+                    });
+                    
+                    res.data.forEach(p => {
+                        const size = parseFloat(p.size);
+                        if (size !== 0) {
+                            const entryPrice = parseFloat(p.entry_price);
+                            const posValue = parseFloat(p.value); 
+                            const sizeUSDT = !isNaN(posValue) ? posValue : (Math.abs(size) * entryPrice);
+                            const sizeTokens = sizeUSDT / entryPrice; 
 
-                        allPositions.push({
-                            exchange: ex, symbol: p.contract, cleanSymbol: p.contract.replace('_', ''),
-                            side: size > 0 ? 'Long' : 'Short',
-                            sizeUSDT: sizeUSDT, 
-                            sizeTokens: sizeTokens, 
-                            leverage: parseInt(p.leverage) || 0,
-                            entryPrice: entryPrice,
-                            unRealized: parseFloat(p.unrealised_pnl) || 0, 
-                            realized: parseFloat(p.realised_pnl) || 0
-                        });
-                    }
-                });
+                            allPositions.push({
+                                exchange: ex, symbol: p.contract, cleanSymbol: p.contract.replace('_', ''),
+                                side: size > 0 ? 'Long' : 'Short',
+                                sizeUSDT: sizeUSDT, 
+                                sizeTokens: sizeTokens, 
+                                leverage: parseInt(p.leverage) || 0,
+                                entryPrice: entryPrice,
+                                unRealized: parseFloat(p.unrealised_pnl) || 0, 
+                                realized: parseFloat(p.realised_pnl) || 0
+                            });
+                        }
+                    });
+                } catch(e) {}
+
+                try {
+                    const urlPathSpot = '/api/v4/spot/accounts'; const sigStrSpot = `GET\n${urlPathSpot}\n\n${hash}\n${ts}`;
+                    const sigSpot = crypto.createHmac('sha512', secret).update(sigStrSpot).digest('hex');
+                    const resSpot = await axios.get(`https://api.gateio.ws${urlPathSpot}`, { headers: { 'KEY': key, 'Timestamp': ts, 'SIGN': sigSpot, 'Accept': 'application/json' } });
+                    const spotTickers = await getSpotTickers('Gate.io');
+                    resSpot.data.forEach(b => {
+                        if (b.currency !== 'USDT' && b.currency !== 'USDC') {
+                            const amt = parseFloat(b.available) + parseFloat(b.locked);
+                            const price = spotTickers[b.currency + '_USDT'] || 0;
+                            const val = amt * price;
+                            if (val > 1) {
+                                allPositions.push({
+                                    exchange: ex + ' Spot', symbol: b.currency + '_USDT', cleanSymbol: b.currency, side: 'Long',
+                                    sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: price, unRealized: 0, realized: 0
+                                });
+                            }
+                        }
+                    });
+                } catch(e) {}
             }
-        } catch (e) { console.log(`Positions API error ${ex}:`, e.message); }
+        } catch (e) {}
     });
 
     await Promise.all(promises);

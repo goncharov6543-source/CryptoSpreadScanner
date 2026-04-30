@@ -17,6 +17,7 @@ document.getElementById('pair-title').innerText = symbol;
 document.getElementById('name-ex1').innerText = ex1NameFormat;
 document.getElementById('name-ex2').innerText = ex2NameFormat;
 
+// Правильне форматування для дуже малих цін (щоб не відрізало нулі)
 function formatPrice(p) {
     if (!p || isNaN(p)) return '---';
     const num = parseFloat(p);
@@ -25,12 +26,22 @@ function formatPrice(p) {
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
+// Функція для визначення мінімального кроку сітки на графіку (для дрібних монет)
+function getMinMove(price) {
+    if (!price) return 0.01;
+    if (price < 0.00001) return 0.000000001;
+    if (price < 0.001) return 0.0000001;
+    if (price < 1) return 0.0001;
+    if (price < 100) return 0.01;
+    return 0.1;
+}
+
 // 2. Ініціалізація графіка
 const chartOptions = {
     layout: { textColor: '#d1d4dc', background: { type: 'solid', color: '#0b0e11' } },
     grid: { vertLines: { color: '#2b3139', style: 1 }, horzLines: { color: '#2b3139', style: 1 } },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
-    rightPriceScale: { borderColor: '#2b3139' },
+    rightPriceScale: { borderColor: '#2b3139', autoScale: true },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
 };
 
@@ -45,6 +56,17 @@ const series1 = chart.addCandlestickSeries({
 const series2 = chart.addCandlestickSeries({
     upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, 
     wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
+});
+
+// МАГІЯ: Невидима лінія, яка буде тримати віджет спреду рівно по центру між цінами
+const spreadSeries = chart.addLineSeries({
+    color: '#f0b90b', // Золота тоненька лінія
+    lineWidth: 1,
+    lineStyle: 3, // Пунктирна (Dashed)
+    crosshairMarkerVisible: false,
+    priceLineVisible: false, // Відключаємо довгу лінію ціни
+    lastValueVisible: true,  // Показуємо ТІЛЬКИ плашку на осі
+    title: 'Спред'
 });
 
 window.addEventListener('resize', () => {
@@ -66,14 +88,14 @@ let lastCandle1 = null;
 let lastCandle2 = null;
 let currentIntervalMins = 1;
 
-// Змінні для живого спреду
 let currentP1 = null;
 let currentP2 = null;
 
 function updateLiveSpread() {
     if (currentP1 && currentP2 && currentP1 > 0) {
         const spread = ((currentP2 - currentP1) / currentP1) * 100;
-        document.getElementById('live-spread').innerText = spread.toFixed(2) + '%';
+        const spreadStr = spread.toFixed(2) + '%';
+        document.getElementById('live-spread').innerText = spreadStr;
     }
 }
 
@@ -86,6 +108,8 @@ window.changeInterval = async function(mins, btnElement) {
     
     series1.setData([]);
     series2.setData([]);
+    spreadSeries.setData([]);
+    
     document.getElementById('price-ex1').innerText = 'Завантаження...';
     document.getElementById('price-ex2').innerText = 'Завантаження...';
 
@@ -93,6 +117,29 @@ window.changeInterval = async function(mins, btnElement) {
         fetchHistory(rawEx1Name, symbol, mins),
         fetchHistory(rawEx2Name, symbol, mins)
     ]);
+
+    // Налаштовуємо правильне відображення цифр (щоб не відрізало нулі)
+    let minMove = 0.01;
+    if (hist1.length > 0) minMove = getMinMove(hist1[0].close);
+    else if (hist2.length > 0) minMove = getMinMove(hist2[0].close);
+
+    const customPriceFormat = { type: 'custom', minMove: minMove, formatter: p => formatPrice(p) };
+    series1.applyOptions({ priceFormat: customPriceFormat });
+    series2.applyOptions({ priceFormat: customPriceFormat });
+    
+    // Формат для центрального віджета спреду (щоб він показував %)
+    spreadSeries.applyOptions({ 
+        priceFormat: { 
+            type: 'custom', minMove: minMove, 
+            formatter: () => {
+                if (currentP1 && currentP2 && currentP1 > 0) {
+                    const spread = ((currentP2 - currentP1) / currentP1) * 100;
+                    return spread.toFixed(2) + '%';
+                }
+                return '';
+            }
+        } 
+    });
 
     if (hist1.length > 0) {
         series1.setData(hist1);
@@ -107,6 +154,17 @@ window.changeInterval = async function(mins, btnElement) {
         document.getElementById('price-ex2').innerText = formatPrice(currentP2);
     }
     
+    // Розраховуємо середню лінію для історії (щоб лінія спреду була правильною)
+    let spreadData = [];
+    let h1Map = {};
+    hist1.forEach(d => h1Map[d.time] = d.close);
+    hist2.forEach(d => {
+        if (h1Map[d.time]) {
+            spreadData.push({ time: d.time, value: (h1Map[d.time] + d.close) / 2 });
+        }
+    });
+    spreadSeries.setData(spreadData);
+    
     updateLiveSpread();
 };
 
@@ -117,7 +175,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    const limit = 240; 
+    const limit = 240; // 4 години історії для 1m
     
     const bInterval = `${intervalMins}m`;
     const bybInterval = `${intervalMins}`;
@@ -166,7 +224,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
 }
 
 // ==========================================
-// ЛОГІКА ДОДАВАННЯ ТІКУ (ВРАХУВАННЯ ТАЙМФРЕЙМУ)
+// ЛОГІКА ДОДАВАННЯ ТІКУ 
 // ==========================================
 function updateLiveCandle(exIndex, price) {
     const intervalMs = currentIntervalMins * 60 * 1000;
@@ -195,9 +253,19 @@ function updateLiveCandle(exIndex, price) {
         currentP2 = price;
     }
     
-    updateLiveSpread(); // Оновлюємо віджет спреду
+    updateLiveSpread(); 
 
-    try { series.update(lastCandle); } catch(e) {}
+    try { 
+        series.update(lastCandle); 
+        
+        // Магія: оновлюємо центральний віджет, щоб він завжди був по центру!
+        if (lastCandle1 && lastCandle2) {
+            spreadSeries.update({
+                time: currentCandleTime,
+                value: (lastCandle1.close + lastCandle2.close) / 2
+            });
+        }
+    } catch(e) {}
 }
 
 // ==========================================
@@ -272,10 +340,9 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// ЗАПУСК (Виклик стартових налаштувань)
+// ЗАПУСК 
 // ==========================================
 async function initLive() {
-    // Вказуємо id кнопки, щоб вона коректно підсвітилась при старті
     await window.changeInterval(1, document.getElementById('btn-1m'));
     ws1 = connectExchange(1, rawEx1Name, symbol);
     ws2 = connectExchange(2, rawEx2Name, symbol);

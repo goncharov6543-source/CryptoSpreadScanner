@@ -218,6 +218,10 @@ async function updateBalancesUI() {
     
     // Застосовуємо заморожені ціни до споту
     const currentPositions = applySpotMemory(currentPositionsRaw);
+    
+    // Зберігаємо поточний баланс по кожній біржі окремо (для розрахунку PNL)
+    const currentExBalances = {};
+    result.details.forEach(info => { currentExBalances[info.exchange] = info.balance; });
 
     const hasOpenPositions = currentPositions.length > 0;
 
@@ -232,7 +236,16 @@ async function updateBalancesUI() {
         if (!currentPosIds.has(id)) {
             const closedPos = lastKnownPositions[id];
             closedPos.closeDate = Date.now();
-            closedPos.finalPnl = (closedPos.unRealized || 0) + (closedPos.realized || 0);
+            
+            // НОВА ЛОГІКА РОЗРАХУНКУ PNL ЧЕРЕЗ РІЗНИЦЮ БАЛАНСУ
+            const baseEx = closedPos.exchange.replace(' Spot', '');
+            const balAfter = currentExBalances[baseEx] || 0;
+            
+            if (closedPos.balAtOpen !== undefined && balAfter > 0) {
+                closedPos.finalPnl = balAfter - closedPos.balAtOpen;
+            } else {
+                closedPos.finalPnl = (closedPos.unRealized || 0) + (closedPos.realized || 0);
+            }
 
             if(!settings.positionHistory) settings.positionHistory = [];
             settings.positionHistory.unshift(closedPos);
@@ -246,10 +259,15 @@ async function updateBalancesUI() {
     lastKnownPositions = {};
     currentPositions.forEach(p => {
         const id = `${p.exchange}_${p.cleanSymbol}_${p.side}`;
+        const baseEx = p.exchange.replace(' Spot', '');
+        
         if(!settings.openDates) settings.openDates = {};
         if(!settings.openDates[id]) {
             settings.openDates[id] = Date.now();
+            p.balAtOpen = currentExBalances[baseEx] || 0; // Запам'ятовуємо баланс до угоди
             historyUpdated = true;
+        } else {
+            p.balAtOpen = settings.savedPositions[id]?.balAtOpen || currentExBalances[baseEx] || 0;
         }
         p.openDate = settings.openDates[id];
         lastKnownPositions[id] = p;
@@ -418,10 +436,7 @@ async function loadNewCoinsPatternsBackground(arbList) {
             patternStats[item.cleanSymbol] = { isReady: false };
             await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
             await new Promise(r => setTimeout(r, 1000));
-            if (document.getElementById('tab-2').classList.contains('active')) {
-                renderArbitrageGrid(currentArbOpps.slice(0, 20));
-                window.processSidebar();
-            }
+            // Видалено перемальовування UI (renderArbitrageGrid) щоб не мигала синя рамка
         }
     }
     isBackgroundLoading = false;
@@ -625,7 +640,7 @@ async function fetchMarketData() {
         if(!settings.blacklist) settings.blacklist = []; 
 
         let positiveFunding = [], negativeFunding = [], priceArbOpps = [];
-        let currentCycleSeen = new Set(); // Відслідковуємо монети поточного циклу для подвійної перевірки спайку
+        let currentCycleSeen = new Set(); 
 
         Object.keys(crossData).forEach(cleanSymbol => {
             const exMap = crossData[cleanSymbol];
@@ -668,7 +683,6 @@ async function fetchMarketData() {
                             if (pairFilter === 'FUT' && typeTag !== 'FUT ↔ FUT') continue;
                             if (pairFilter === 'SPOT' && typeTag !== 'SPOT 🟢 ↔ FUT 🔴') continue;
 
-                            // Механіка подвійної перевірки спайку (req 5)
                             const arbKey = `${cleanSymbol}_${ex1N}_${ex2N}`;
                             currentCycleSeen.add(arbKey);
 
@@ -678,7 +692,6 @@ async function fetchMarketData() {
                                 pendingArbOpps[arbKey]++;
                             }
 
-                            // Якщо монета пройшла 3 перевірки підряд (перша + 2 додаткові)
                             if (pendingArbOpps[arbKey] >= 3) {
                                 priceArbOpps.push({
                                     cleanSymbol, spreadPct: spread, typeTag: typeTag,
@@ -1230,7 +1243,7 @@ window.retryPattern = function(symbol, buyEx, sellEx) {
         patternStats[symbol].status = 'loading';
         patternStats[symbol].startTime = Date.now();
     }
-    window.processSidebar();
+    // window.processSidebar(); // Видалено примусове перемальовування
     calculateCoinPattern(symbol, buyEx, sellEx);
 };
 
@@ -1679,8 +1692,6 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
     patternStats[symbol].buyEx = buyEx;
     patternStats[symbol].sellEx = sellEx;
 
-    if (document.getElementById('tab-2').classList.contains('active')) window.processSidebar();
-
     try {
         const [d1, d2] = await Promise.all([
             getKlineDataChunked(buyEx, symbol, 720, () => {}),
@@ -1713,14 +1724,9 @@ async function calculateCoinPattern(symbol, buyEx, sellEx) {
         patternStats[symbol].status = 'ready';
         patternStats[symbol].spreads = spreads;
         
-        if (document.getElementById('tab-2').classList.contains('active')) {
-            window.processSidebar();
-        }
-        
     } catch(e) {
         console.log(`Помилка розрахунку патерну для ${symbol}`, e.message);
         if (patternStats[symbol]) patternStats[symbol].status = 'error';
-        if (document.getElementById('tab-2').classList.contains('active')) window.processSidebar();
     }
 }
 
@@ -1777,8 +1783,4 @@ setInterval(async () => {
         } catch(e) { }
     }));
     
-    if (document.getElementById('tab-2').classList.contains('active')) {
-        renderArbitrageGrid(currentArbOpps.slice(0, 20));
-        window.processSidebar();
-    }
 }, 60000);

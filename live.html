@@ -5,9 +5,10 @@
     <title>Live Позиція</title>
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <style>
+        *:focus { outline: none !important; } /* Прибирає золотисту обводку */
+        
         body { margin: 0; padding: 0; background-color: #0b0e11; color: #EAECEF; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
         
-        /* Хедер */
         .header { display: flex; justify-content: space-between; align-items: center; padding: 12px 20px; background: #161a1e; border-bottom: 1px solid #2b3139; flex-shrink: 0;}
         .header-left { display: flex; align-items: center; gap: 20px; }
         .header h2 { margin: 0; font-size: 1.3em; color: #f0b90b; letter-spacing: 0.5px; }
@@ -24,10 +25,8 @@
         .dot-red { background-color: #e74c3c; box-shadow: 0 0 8px rgba(231, 76, 60, 0.8); }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
 
-        /* Макет з повзунком */
         .main-layout { display: flex; flex: 1; height: 0; width: 100%; }
         
-        /* 60% Графік */
         #chart-wrapper { width: 60%; height: 100%; display: flex; flex-direction: column; min-width: 20%; }
         .prices-overlay { display: flex; gap: 30px; padding: 10px 20px; font-size: 1.2em; font-weight: bold; background: #0b0e11; border-bottom: 1px solid #2b3139; flex-shrink: 0;}
         .price-box { display: flex; align-items: center; gap: 8px; }
@@ -35,39 +34,33 @@
         .price-ex2 { color: #2962FF; }
         #chart-container { flex: 1; width: 100%; position: relative; }
 
-        /* СПЛІТТЕР */
         #resizer { width: 6px; background: #1e2329; cursor: col-resize; z-index: 10; transition: background 0.2s; border-left: 1px solid #2b3139; border-right: 1px solid #2b3139; flex-shrink: 0; }
         #resizer:hover, #resizer:active { background: #3498db; }
 
-        /* 40% Стакани Контейнер */
         #ob-container { flex: 1; display: flex; flex-direction: column; min-width: 20%; background: #0b0e11; }
         
-        /* ПАНЕЛЬ НАЛАШТУВАНЬ СТАКАНА */
         .dom-settings { display: flex; flex-wrap: wrap; gap: 15px; padding: 8px 15px; background: #161a1e; border-bottom: 1px solid #2b3139; font-size: 0.85em; color: #848e9c; align-items: center; justify-content: center; flex-shrink: 0;}
         .dom-settings label { display: flex; align-items: center; gap: 8px; font-weight: bold;}
-        .dom-settings input[type=range] { width: 90px; accent-color: #848e9c; } /* СІРИЙ ПОВЗУНОК */
+        .dom-settings input[type=range] { width: 90px; accent-color: #848e9c; } 
         .dom-settings select { background: #0b0e11; color: #EAECEF; border: 1px solid #3c444f; padding: 4px 8px; border-radius: 4px; font-weight: bold;}
 
-        /* Самі стакани */
         #ob-wrapper { flex: 1; display: flex; min-height: 0; }
         .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; border-right: 1px solid #2b3139; box-sizing: border-box;}
         .ob-header { text-align: center; padding: 8px; background: #161a1e; font-weight: bold; color: #848e9c; border-bottom: 1px solid #2b3139; font-size: 0.9em; flex-shrink: 0;}
         
         .ob-body { display: flex; flex: 1; overflow: hidden; height: 100%; }
         
-        /* Зона зліва для шаріків */
-        .ob-ticks { flex: 0.8; position: relative; border-right: 1px dashed #2b3139; background: #0b0e11; }
+        /* 50/50 МАСШТАБ ДЛЯ ШАРІКІВ І СТАКАНА */
+        .ob-ticks { flex: 1; position: relative; border-right: 1px dashed #2b3139; background: #0b0e11; }
         .ob-ticks canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
         
-        /* Зона справа для самого стакана */
-        .ob-dom { flex: 1.2; display: flex; flex-direction: column; }
+        .ob-dom { flex: 1; display: flex; flex-direction: column; }
         
         .ob-section { flex: 15; display: flex; flex-direction: column; overflow: hidden; }
         .ob-mid { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.1em; font-weight: bold; background: #161a1e; border-top: 1px solid #2b3139; border-bottom: 1px solid #2b3139; overflow: hidden;}
         
-        /* Ідеальна висота рядка */
         .ob-row { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; position: relative; font-family: monospace; z-index: 1; overflow: hidden;}
-        .ob-row.empty { visibility: hidden; } /* Приховуємо текст пустих рядків, але тримаємо висоту */
+        .ob-row.empty { visibility: hidden; } 
         
         .ob-mid-ex1 { color: #00d67c; }
         .ob-mid-ex2 { color: #2962FF; }
@@ -115,7 +108,6 @@
         <div id="resizer"></div>
         
         <div id="ob-container">
-            <!-- ПАНЕЛЬ НАЛАШТУВАНЬ DOM -->
             <div class="dom-settings">
                 <label>Об'єм:
                     <select id="dom-vol-type" onchange="updateDomSettings()">

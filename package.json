@@ -1,6 +1,6 @@
 {
   "name": "crypto-arbitrage-scanner",
-  "version": "1.4.8",
+  "version": "1.4.9",
   "description": "Cross-Exchange Crypto Arbitrage Scanner",
   "main": "main.js",
   "scripts": {

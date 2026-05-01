@@ -418,20 +418,26 @@ function updateStatusDot() {
 function connectExchange(exIndex, exName, symbol) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     let wsUrl = '';
+    
+    // АВТО-НОРМАЛІЗАТОР СИМВОЛУ ДЛЯ СПОТОВИХ БІРЖ (відрізає 1000)
+    let subSym = cleanSym;
+    if (exName.includes('Spot') && subSym.startsWith('1000') && !subSym.includes('SATS')) {
+        subSym = subSym.replace(/^10000?/, '');
+    }
 
-    if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms/${cleanSym.toLowerCase()}@aggTrade`;
-    else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms/${cleanSym.toLowerCase()}@aggTrade`;
+    if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/stream?streams=${subSym.toLowerCase()}@ticker/${subSym.toLowerCase()}@depth20@100ms/${subSym.toLowerCase()}@aggTrade`;
+    else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/stream?streams=${subSym.toLowerCase()}@ticker/${subSym.toLowerCase()}@depth20@100ms/${subSym.toLowerCase()}@aggTrade`;
     else if (exName === 'Bybit') wsUrl = 'wss://stream.bybit.com/v5/public/linear';
     else if (exName === 'Bybit Spot') wsUrl = 'wss://stream.bybit.com/v5/public/spot';
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
     else if (exName === 'Gate.io Spot') wsUrl = 'wss://api.gateio.ws/ws/v4/';
     else if (exName === 'MEXC') wsUrl = 'wss://contract.mexc.com/edge';
-    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs.mexc.com/ws'; // Спот V3
+    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs.mexc.com/ws';
     else if (exName === 'Bitget') wsUrl = 'wss://ws.bitget.com/mix/v1/stream';
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
     if (!wsUrl) return null;
-    console.log(`[WS Ініціалізація] Спроба підключення до ${exName} за адресою: ${wsUrl} (Символ: ${cleanSym})`);
+    console.log(`[WS Ініціалізація] Спроба підключення до ${exName} за адресою: ${wsUrl} (Символ: ${subSym})`);
     
     const ws = new WebSocket(wsUrl);
 
@@ -441,36 +447,40 @@ function connectExchange(exIndex, exName, symbol) {
         updateStatusDot();
 
         if (exName.startsWith('Bybit')) {
-            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`, `orderbook.50.${cleanSym}`, `publicTrade.${cleanSym}`] }));
+            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${subSym}`, `orderbook.50.${subSym}`, `publicTrade.${subSym}`] }));
         } else if (exName === 'Gate.io') {
             const time = Math.floor(Date.now()/1000);
-            ws.send(JSON.stringify({ time: time, channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-            ws.send(JSON.stringify({ time: time, channel: 'futures.order_book', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "0"] }));
-            ws.send(JSON.stringify({ time: time, channel: 'futures.trades', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
+            ws.send(JSON.stringify({ time: time, channel: 'futures.tickers', event: 'subscribe', payload: [subSym.replace('USDT', '_USDT')] }));
+            ws.send(JSON.stringify({ time: time, channel: 'futures.order_book', event: 'subscribe', payload: [subSym.replace('USDT', '_USDT'), "20", "0"] }));
+            ws.send(JSON.stringify({ time: time, channel: 'futures.trades', event: 'subscribe', payload: [subSym.replace('USDT', '_USDT')] }));
         } else if (exName === 'Gate.io Spot') {
             const time = Math.floor(Date.now()/1000);
-            ws.send(JSON.stringify({ time: time, channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-            ws.send(JSON.stringify({ time: time, channel: 'spot.order_book', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
-            ws.send(JSON.stringify({ time: time, channel: 'spot.trades', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
+            ws.send(JSON.stringify({ time: time, channel: 'spot.tickers', event: 'subscribe', payload: [subSym.replace('USDT', '_USDT')] }));
+            ws.send(JSON.stringify({ time: time, channel: 'spot.order_book', event: 'subscribe', payload: [subSym.replace('USDT', '_USDT'), "20", "100ms"] }));
+            ws.send(JSON.stringify({ time: time, channel: 'spot.trades', event: 'subscribe', payload: [subSym.replace('USDT', '_USDT')] }));
         } else if (exName === 'MEXC') {
-            ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
-            ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
-            ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
+            ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: subSym.replace('USDT', '_USDT') } }));
+            ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: subSym.replace('USDT', '_USDT') } }));
+            ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: subSym.replace('USDT', '_USDT') } }));
         } else if (exName === 'MEXC Spot') {
-            // Додали bookTicker для кращого оновлення ціни
-            const payload = { 
-                method: 'SUBSCRIPTION', 
-                params: [
-                    `spot@public.deals.v3.api@${cleanSym}`, 
-                    `spot@public.limit.depth.v3.api@${cleanSym}@20`,
-                    `spot@public.bookTicker.v3.api@${cleanSym}` 
-                ] 
-            };
-            console.log(`[WS Відправка підписки] ${exName}:`, payload);
-            ws.send(JSON.stringify(payload));
+            // РОЗДІЛЕНА ПІДПИСКА MEXC SPOT (Щоб не крашило весь вебсокет через один канал)
+            const spotSubs = [
+                `spot@public.deals.v3.api@${subSym}`,
+                `spot@public.limit.depth.v3.api@${subSym}@10`, // Знижено до 10 рівнів для стабільності
+                `spot@public.bookTicker.v3.api@${subSym}` 
+            ];
+            
+            spotSubs.forEach((subChannel, i) => {
+                setTimeout(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        console.log(`[WS Відправка підписки] MEXC Spot:`, subChannel);
+                        ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [subChannel] }));
+                    }
+                }, i * 150); // Відправляємо з затримкою 150мс
+            });
         } else if (exName.startsWith('Bitget')) {
             const instType = exName.includes('Spot') ? 'SP' : 'USDT-FUTURES';
-            ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: cleanSym }, { instType: instType, channel: 'books15', instId: cleanSym }, { instType: instType, channel: 'trade', instId: cleanSym }] }));
+            ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: subSym }, { instType: instType, channel: 'books15', instId: subSym }, { instType: instType, channel: 'trade', instId: subSym }] }));
         }
     };
 
@@ -482,14 +492,12 @@ function connectExchange(exIndex, exName, symbol) {
         try {
             const data = JSON.parse(event.data);
             
-            // Логування помилок API (якщо біржа повертає помилку підписки)
             if (data.code !== undefined && data.code !== 0 && data.code !== 200) {
                 console.error(`⚠️ [API Помилка] ${exName} повернула помилку:`, data);
             }
 
-            // Дебаг-логування для MEXC (виведе перші 3 повідомлення в консоль)
             if (exName.includes('MEXC') && !window[`mexc_debug_${exIndex}`]) { window[`mexc_debug_${exIndex}`] = 0; }
-            if (exName.includes('MEXC') && window[`mexc_debug_${exIndex}`] < 3) {
+            if (exName.includes('MEXC') && window[`mexc_debug_${exIndex}`] < 4) {
                 console.log(`[Дебаг Дані ${exName}] Повідомлення #${window[`mexc_debug_${exIndex}`] + 1}:`, data);
                 window[`mexc_debug_${exIndex}`]++;
             }
@@ -501,8 +509,8 @@ function connectExchange(exIndex, exName, symbol) {
             else if (exName === 'Gate.io' && data.channel === 'futures.tickers' && data.result && data.result.length > 0) price = parseFloat(data.result[0].last);
             else if (exName === 'Gate.io Spot' && data.channel === 'spot.tickers' && data.result && data.result.last) price = parseFloat(data.result.last);
             else if (exName === 'MEXC' && data.channel === 'push.ticker' && data.data) price = parseFloat(data.data.lastPrice);
-            else if (exName === 'MEXC Spot' && data.c && data.c.includes('bookTicker') && data.d) price = parseFloat(data.d.a || data.d.b); // Оновлення через bookTicker
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p);
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('bookTicker') && data.d) price = parseFloat(data.d.a || data.d.b); 
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('deals.v3.api') && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p);
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'ticker' && data.data) price = parseFloat(data.data[0].lastPr);
 
             if (price) updateLiveCandle(exIndex, price);
@@ -546,10 +554,7 @@ function connectExchange(exIndex, exName, symbol) {
                 data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
             }
 
-        } catch (err) {
-            // Для розробки: закоментуй цей console.error, якщо спамить, але для дебагу MEXC він корисний
-            console.error(`[WS Помилка Парсингу] ${exName}:`, err, "Дані:", event.data);
-        }
+        } catch (err) {}
     };
 
     ws.onclose = (event) => {
@@ -580,7 +585,7 @@ setInterval(() => {
         else if (exName === 'Gate.io') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'futures.ping' }));
         else if (exName === 'Gate.io Spot') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'spot.ping' }));
         else if (exName === 'MEXC') ws.send(JSON.stringify({ method: 'ping' }));
-        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'PING' })); // MEXC Spot V3 вимагає PING великими буквами
+        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'PING' }));
         else if (exName.startsWith('Bitget')) ws.send('ping');
     };
     sendPing(ws1, rawEx1Name);

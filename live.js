@@ -82,7 +82,7 @@ function updateLiveSpread() {
 }
 
 // ==========================================
-// 3. НАЛАШТУВАННЯ СТАКАНА (Scale, Precision, Vol Type)
+// 3. НАЛАШТУВАННЯ СТАКАНА
 // ==========================================
 let domConfig = { scale: 100, precision: 'auto', volType: 'USDT' };
 
@@ -194,9 +194,8 @@ function handleTrade(exIndex, price, qty, isBuy) {
     const volUsdt = price * qty;
     const hist = tickHistory[exIndex];
     
-    // Агрегація однакових угод
     if (hist.length > 0) {
-        const last = hist[0]; // Перший елемент - найновіший
+        const last = hist[0]; 
         if (last.p === parseFloat(price) && last.isBuy === isBuy) {
             last.v += volUsdt;
             last.q += qty;
@@ -204,9 +203,8 @@ function handleTrade(exIndex, price, qty, isBuy) {
         }
     }
     
-    // Додаємо нову угоду (на початок масиву, щоб вона була x=0)
     hist.unshift({ p: parseFloat(price), q: parseFloat(qty), v: volUsdt, isBuy: isBuy });
-    if (hist.length > 200) hist.pop(); // Захист пам'яті
+    if (hist.length > 200) hist.pop(); 
 }
 
 function normalizeObData(arr) {
@@ -279,7 +277,6 @@ function renderOrderBook(exIndex) {
     const scaleMult = domConfig.scale / 100;
     const fontSize = 0.85 * scaleMult;
 
-    // Малюємо АСКИ (з пустими рядками для стабільної висоти)
     let asksHtml = '';
     const emptyAsksCount = 15 - asks.length;
     for (let i = 0; i < emptyAsksCount; i++) {
@@ -292,7 +289,6 @@ function renderOrderBook(exIndex) {
     });
     asksContainer.innerHTML = asksHtml;
 
-    // Малюємо БІДИ
     let bidsHtml = '';
     bids.forEach(b => {
         const width = maxVal > 0 ? (b.displayVal / maxVal) * 100 : 0;
@@ -307,11 +303,11 @@ function renderOrderBook(exIndex) {
 }
 
 // ==========================================
-// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД (CANVAS)
+// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД
 // ==========================================
 function drawTicksLoop() {
     const scaleMult = domConfig.scale / 100;
-    const stepX = 35 * scaleMult; // Відстань між шаріками
+    const stepX = 35 * scaleMult; 
     const paddingRight = 15 * scaleMult; 
 
     [1, 2].forEach(exIndex => {
@@ -334,19 +330,16 @@ function drawTicksLoop() {
         const hist = tickHistory[exIndex];
         if (hist.length === 0) return;
 
-        // Беремо агрегований стакан для правильної висоти (тільки заповнені рядки)
         const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
         const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
         if (asks.length === 0 || bids.length === 0) return;
 
-        // Розраховуємо ціновий діапазон стакану
-        const maxP = asks.length > 0 ? asks[0].p : currentP1; // Верхній рядок Асків
-        const minP = bids.length > 0 ? bids[bids.length - 1].p : currentP1; // Нижній рядок Бідів
+        const maxP = asks.length > 0 ? asks[0].p : currentP1; 
+        const minP = bids.length > 0 ? bids[bids.length - 1].p : currentP1; 
         if (maxP === minP) return;
 
-        const rowH = h / 31; // 15 + 1 + 15 рядків
+        const rowH = h / 31; 
 
-        // Відмальовуємо лінію з'єднання
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(132, 142, 156, 0.6)';
         ctx.lineWidth = 2 * scaleMult;
@@ -356,10 +349,8 @@ function drawTicksLoop() {
             const tick = hist[i];
             const x = w - paddingRight - (i * stepX);
             
-            // Якщо шарік вийшов за лівий екран - відрізаємо всю стару історію
             if (x < -100) { hist.splice(i); break; }
 
-            // Позиція Y: відступ зверху (для порожніх асків) + розрахунок
             const emptyAsksOffset = (15 - asks.length) * rowH;
             const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
 
@@ -368,7 +359,6 @@ function drawTicksLoop() {
         }
         ctx.stroke();
 
-        // Відмальовуємо самі шаріки (в зворотньому порядку, щоб нові були поверх)
         for (let i = hist.length - 1; i >= 0; i--) {
             const tick = hist[i];
             const x = w - paddingRight - (i * stepX);
@@ -378,11 +368,11 @@ function drawTicksLoop() {
             
             if (y < -20 || y > h + 20) continue; 
 
-            let r = 10 * scaleMult; // Базовий розмір (в 2.5р більший ніж був)
-            if (tick.v >= 50000) r = 45 * scaleMult;      // Кит
-            else if (tick.v >= 15000) r = 30 * scaleMult; // Великий
-            else if (tick.v >= 5000) r = 20 * scaleMult;  // Середній
-            else if (tick.v >= 1000) r = 15 * scaleMult;  // Малий
+            let r = 10 * scaleMult; 
+            if (tick.v >= 50000) r = 45 * scaleMult;      
+            else if (tick.v >= 15000) r = 30 * scaleMult; 
+            else if (tick.v >= 5000) r = 20 * scaleMult;  
+            else if (tick.v >= 1000) r = 15 * scaleMult;  
             
             ctx.beginPath();
             ctx.arc(x, y, r, 0, 2 * Math.PI);
@@ -393,7 +383,6 @@ function drawTicksLoop() {
             ctx.lineWidth = 2 * scaleMult;
             ctx.stroke();
             
-            // Текст (Пишемо у всіх шаріках)
             const val = domConfig.volType === 'USDT' ? tick.v : tick.q;
             let txt = '';
             if (val >= 1000000) txt = (val/1000000).toFixed(2) + 'M';
@@ -416,7 +405,7 @@ requestAnimationFrame(drawTicksLoop);
 
 
 // ==========================================
-// 7. WEBSOCKETS (Підключення)
+// 7. WEBSOCKETS (Підключення та Логування)
 // ==========================================
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
@@ -437,14 +426,17 @@ function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
     else if (exName === 'Gate.io Spot') wsUrl = 'wss://api.gateio.ws/ws/v4/';
     else if (exName === 'MEXC') wsUrl = 'wss://contract.mexc.com/edge';
-    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs.mexc.com/ws';
+    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs.mexc.com/ws'; // Спот V3
     else if (exName === 'Bitget') wsUrl = 'wss://ws.bitget.com/mix/v1/stream';
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
     if (!wsUrl) return null;
+    console.log(`[WS Ініціалізація] Спроба підключення до ${exName} за адресою: ${wsUrl} (Символ: ${cleanSym})`);
+    
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
+        console.log(`✅ [WS Успіх] Підключено до ${exName}`);
         if (exIndex === 1) ws1Active = true; else ws2Active = true;
         updateStatusDot();
 
@@ -465,17 +457,43 @@ function connectExchange(exIndex, exName, symbol) {
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
         } else if (exName === 'MEXC Spot') {
-            ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`, `spot@public.limit.depth.v3.api@${cleanSym}@20`] }));
+            // Додали bookTicker для кращого оновлення ціни
+            const payload = { 
+                method: 'SUBSCRIPTION', 
+                params: [
+                    `spot@public.deals.v3.api@${cleanSym}`, 
+                    `spot@public.limit.depth.v3.api@${cleanSym}@20`,
+                    `spot@public.bookTicker.v3.api@${cleanSym}` 
+                ] 
+            };
+            console.log(`[WS Відправка підписки] ${exName}:`, payload);
+            ws.send(JSON.stringify(payload));
         } else if (exName.startsWith('Bitget')) {
             const instType = exName.includes('Spot') ? 'SP' : 'USDT-FUTURES';
             ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: cleanSym }, { instType: instType, channel: 'books15', instId: cleanSym }, { instType: instType, channel: 'trade', instId: cleanSym }] }));
         }
     };
 
+    ws.onerror = (error) => {
+        console.error(`❌ [WS Помилка З'єднання] ${exName}:`, error);
+    };
+
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
             
+            // Логування помилок API (якщо біржа повертає помилку підписки)
+            if (data.code !== undefined && data.code !== 0 && data.code !== 200) {
+                console.error(`⚠️ [API Помилка] ${exName} повернула помилку:`, data);
+            }
+
+            // Дебаг-логування для MEXC (виведе перші 3 повідомлення в консоль)
+            if (exName.includes('MEXC') && !window[`mexc_debug_${exIndex}`]) { window[`mexc_debug_${exIndex}`] = 0; }
+            if (exName.includes('MEXC') && window[`mexc_debug_${exIndex}`] < 3) {
+                console.log(`[Дебаг Дані ${exName}] Повідомлення #${window[`mexc_debug_${exIndex}`] + 1}:`, data);
+                window[`mexc_debug_${exIndex}`]++;
+            }
+
             // 1. ТІКЕРИ
             let price = null;
             if (exName.startsWith('Binance') && data.data && data.data.c) price = parseFloat(data.data.c); 
@@ -483,6 +501,7 @@ function connectExchange(exIndex, exName, symbol) {
             else if (exName === 'Gate.io' && data.channel === 'futures.tickers' && data.result && data.result.length > 0) price = parseFloat(data.result[0].last);
             else if (exName === 'Gate.io Spot' && data.channel === 'spot.tickers' && data.result && data.result.last) price = parseFloat(data.result.last);
             else if (exName === 'MEXC' && data.channel === 'push.ticker' && data.data) price = parseFloat(data.data.lastPrice);
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('bookTicker') && data.d) price = parseFloat(data.d.a || data.d.b); // Оновлення через bookTicker
             else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) price = parseFloat(data.d.deals[0].p);
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'ticker' && data.data) price = parseFloat(data.data[0].lastPr);
 
@@ -527,10 +546,14 @@ function connectExchange(exIndex, exName, symbol) {
                 data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
             }
 
-        } catch (err) {}
+        } catch (err) {
+            // Для розробки: закоментуй цей console.error, якщо спамить, але для дебагу MEXC він корисний
+            console.error(`[WS Помилка Парсингу] ${exName}:`, err, "Дані:", event.data);
+        }
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+        console.warn(`🔌 [WS Закрито] ${exName} - Код: ${event.code}, Причина: ${event.reason || 'невідомо'}. Спроба реконекту...`);
         if (exIndex === 1) ws1Active = false; else ws2Active = false;
         updateStatusDot();
         setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
@@ -557,7 +580,7 @@ setInterval(() => {
         else if (exName === 'Gate.io') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'futures.ping' }));
         else if (exName === 'Gate.io Spot') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'spot.ping' }));
         else if (exName === 'MEXC') ws.send(JSON.stringify({ method: 'ping' }));
-        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'PING' }));
+        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'PING' })); // MEXC Spot V3 вимагає PING великими буквами
         else if (exName.startsWith('Bitget')) ws.send('ping');
     };
     sendPing(ws1, rawEx1Name);

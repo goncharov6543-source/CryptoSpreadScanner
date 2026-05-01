@@ -24,7 +24,7 @@
         .dot-red { background-color: #e74c3c; box-shadow: 0 0 8px rgba(231, 76, 60, 0.8); }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
 
-        /* Макет 60/40 з повзунком */
+        /* Макет 60/40 */
         .main-layout { display: flex; flex: 1; height: 0; width: 100%; }
         
         /* 60% Графік */
@@ -58,6 +58,12 @@
         .ob-qty { color: #d1d4dc; }
         .c-ask { color: #ef5350; }
         .c-bid { color: #26a69a; }
+        
+        /* СТИЛІ ДЛЯ ШАРІКІВ УГОД У СТАКАНІ */
+        .trade-bubbles { display: flex; gap: 2px; align-items: center; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; }
+        .bubble { border-radius: 50%; opacity: 0.85; transition: opacity 0.2s ease-out; }
+        .bubble-buy { background-color: #00d67c; box-shadow: 0 0 5px #00d67c; }
+        .bubble-sell { background-color: #e74c3c; box-shadow: 0 0 5px #e74c3c; }
     </style>
 </head>
 <body>
@@ -94,7 +100,6 @@
             <div id="chart-container"></div>
         </div>
         
-        <!-- НАШ НОВИЙ ПОВЗУНОК -->
         <div id="resizer"></div>
         
         <div id="ob-wrapper">

@@ -62,32 +62,26 @@ const series2 = chart.addCandlestickSeries({
     wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
 });
 
-// Авторесайз при зміні вікна
 window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
-// === ЛОГІКА ЗМІНИ РОЗМІРІВ (Спліттер) ===
 const resizer = document.getElementById('resizer');
 const chartWrapper = document.getElementById('chart-wrapper');
 let isResizing = false;
 
 resizer.addEventListener('mousedown', (e) => {
     isResizing = true;
-    document.body.style.userSelect = 'none'; // Щоб текст не виділявся при перетягуванні
+    document.body.style.userSelect = 'none'; 
 });
 
 document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
     const totalWidth = document.body.clientWidth;
     let newWidthPct = (e.clientX / totalWidth) * 100;
-    
-    // Ліміти: від 20% до 80% (щоб не зламати вікно повністю)
     if (newWidthPct < 20) newWidthPct = 20;
     if (newWidthPct > 80) newWidthPct = 80;
-    
     chartWrapper.style.width = newWidthPct + '%';
-    // Динамічно оновлюємо розмір графіка під час перетягування
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
@@ -96,7 +90,6 @@ document.addEventListener('mouseup', () => {
     document.body.style.userSelect = 'auto';
 });
 
-// Кольори
 window.setColorMode = function(mode) {
     if (mode === 'solid') {
         series1.applyOptions({ upColor: '#00d67c', downColor: '#00d67c', wickUpColor: '#00d67c', wickDownColor: '#00d67c' });
@@ -159,9 +152,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    
-    // Встановлюємо 720 свічок (12 годин для 1 хвилинки)
-    const limit = 720; 
+    const limit = 720; // Рівно 12 годин історії для 1-хвилинного графіка
 
     const bInterval = `${intervalMins}m`;
     const bybInterval = `${intervalMins}`;
@@ -230,9 +221,22 @@ function updateLiveCandle(exIndex, price) {
 }
 
 // ==========================================
-// 4. ДВИЖОК СТАКАНА (Order Book Engine)
+// 4. ДВИЖОК СТАКАНА ТА ПРИНТИ УГОД
 // ==========================================
 let obState = { 1: { asks: [], bids: [] }, 2: { asks: [], bids: [] } };
+let recentTrades = { 1: {}, 2: {} }; // Зберігаємо шаріки
+
+function handleTrade(exIndex, price, qty, isBuy) {
+    const volUsdt = price * qty;
+    if (volUsdt < 10) return; // Відсікаємо спам дрібними угодами
+
+    const pStr = parseFloat(price).toString(); // Ключем є ціна
+    if (!recentTrades[exIndex][pStr]) recentTrades[exIndex][pStr] = [];
+    recentTrades[exIndex][pStr].push({ vol: volUsdt, isBuy: isBuy, time: Date.now() });
+    
+    // Перемальовуємо стакан одразу, щоб шарік з'явився миттєво
+    renderOrderBook(exIndex);
+}
 
 function normalizeObData(arr) {
     if (!arr) return [];
@@ -274,6 +278,13 @@ function renderOrderBook(exIndex) {
     const asksContainer = document.getElementById(`ob-asks-${exIndex}`);
     const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
 
+    // Видаляємо старі шаріки (старші за 1.5 сек)
+    const now = Date.now();
+    for (let p in recentTrades[exIndex]) {
+        recentTrades[exIndex][p] = recentTrades[exIndex][p].filter(t => now - t.time < 1500); 
+        if (recentTrades[exIndex][p].length === 0) delete recentTrades[exIndex][p];
+    }
+
     const asks = obState[exIndex].asks.slice(0, 15).reverse();
     const bids = obState[exIndex].bids.slice(0, 15);
 
@@ -281,23 +292,49 @@ function renderOrderBook(exIndex) {
     asks.forEach(a => { if(a.q > maxQty) maxQty = a.q; });
     bids.forEach(b => { if(b.q > maxQty) maxQty = b.q; });
 
+    const generateRow = (item, isAsk) => {
+        const width = maxQty > 0 ? (item.q / maxQty) * 100 : 0;
+        const pStr = item.p.toString();
+        let bubblesHtml = '';
+        
+        // Якщо по цій ціні щойно була угода — малюємо шаріки
+        if (recentTrades[exIndex][pStr]) {
+            bubblesHtml = '<div class="trade-bubbles">';
+            recentTrades[exIndex][pStr].forEach(t => {
+                let s = 4; // Мінімальний розмір
+                if (t.vol > 20000) s = 12;      // Кит
+                else if (t.vol > 5000) s = 9;   // Великий
+                else if (t.vol > 1000) s = 7;   // Середній
+                else if (t.vol > 100) s = 5;    // Малий
+                
+                const c = t.isBuy ? 'bubble-buy' : 'bubble-sell';
+                bubblesHtml += `<div class="bubble ${c}" style="width:${s}px; height:${s}px;"></div>`;
+            });
+            bubblesHtml += '</div>';
+        }
+
+        const bgClass = isAsk ? 'ob-bg-ask' : 'ob-bg-bid';
+        const textClass = isAsk ? 'c-ask' : 'c-bid';
+        return `<div class="ob-row"><div class="ob-bg ${bgClass}" style="width: ${width}%;"></div><span class="ob-price ${textClass}">${formatPrice(item.p)}</span>${bubblesHtml}<span class="ob-qty">${item.q.toFixed(2)}</span></div>`;
+    };
+
     let asksHtml = '';
-    asks.forEach(a => {
-        const width = maxQty > 0 ? (a.q / maxQty) * 100 : 0;
-        asksHtml += `<div class="ob-row"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${a.q.toFixed(2)}</span></div>`;
-    });
+    asks.forEach(a => { asksHtml += generateRow(a, true); });
     asksContainer.innerHTML = asksHtml;
 
     let bidsHtml = '';
-    bids.forEach(b => {
-        const width = maxQty > 0 ? (b.q / maxQty) * 100 : 0;
-        bidsHtml += `<div class="ob-row"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${b.q.toFixed(2)}</span></div>`;
-    });
+    bids.forEach(b => { bidsHtml += generateRow(b, false); });
     bidsContainer.innerHTML = bidsHtml;
 }
 
+// Примусове оновлення стаканів, щоб шаріки плавно зникали, навіть якщо ринок стоїть
+setInterval(() => {
+    renderOrderBook(1);
+    renderOrderBook(2);
+}, 500); 
+
 // ==========================================
-// 5. WEBSOCKETS (Графік + Стакани)
+// 5. WEBSOCKETS (Графік + Стакани + Угоди)
 // ==========================================
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
@@ -311,8 +348,8 @@ function connectExchange(exIndex, exName, symbol) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     let wsUrl = '';
 
-    if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms`;
-    else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms`;
+    if (exName === 'Binance') wsUrl = `wss://fapi-stream.binance.com/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms/${cleanSym.toLowerCase()}@aggTrade`;
+    else if (exName === 'Binance Spot') wsUrl = `wss://stream.binance.com:9443/stream?streams=${cleanSym.toLowerCase()}@ticker/${cleanSym.toLowerCase()}@depth20@100ms/${cleanSym.toLowerCase()}@aggTrade`;
     else if (exName === 'Bybit') wsUrl = 'wss://stream.bybit.com/v5/public/linear';
     else if (exName === 'Bybit Spot') wsUrl = 'wss://stream.bybit.com/v5/public/spot';
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
@@ -330,25 +367,26 @@ function connectExchange(exIndex, exName, symbol) {
         updateStatusDot();
 
         if (exName.startsWith('Bybit')) {
-            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`, `orderbook.50.${cleanSym}`] }));
+            ws.send(JSON.stringify({ op: 'subscribe', args: [`tickers.${cleanSym}`, `orderbook.50.${cleanSym}`, `publicTrade.${cleanSym}`] }));
         } else if (exName === 'Gate.io') {
             const time = Math.floor(Date.now()/1000);
             ws.send(JSON.stringify({ time: time, channel: 'futures.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-            // Виправлений канал стакана Gate.io
             ws.send(JSON.stringify({ time: time, channel: 'futures.order_book', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "0"] }));
+            ws.send(JSON.stringify({ time: time, channel: 'futures.trades', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
         } else if (exName === 'Gate.io Spot') {
             const time = Math.floor(Date.now()/1000);
             ws.send(JSON.stringify({ time: time, channel: 'spot.tickers', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
-            // Виправлений канал стакана Gate.io Spot
             ws.send(JSON.stringify({ time: time, channel: 'spot.order_book', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT'), "20", "100ms"] }));
+            ws.send(JSON.stringify({ time: time, channel: 'spot.trades', event: 'subscribe', payload: [cleanSym.replace('USDT', '_USDT')] }));
         } else if (exName === 'MEXC') {
             ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
+            ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
         } else if (exName === 'MEXC Spot') {
             ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`, `spot@public.limit.depth.v3.api@${cleanSym}`] }));
         } else if (exName.startsWith('Bitget')) {
             const instType = exName.includes('Spot') ? 'SP' : 'USDT-FUTURES';
-            ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: cleanSym }, { instType: instType, channel: 'books15', instId: cleanSym }] }));
+            ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: cleanSym }, { instType: instType, channel: 'books15', instId: cleanSym }, { instType: instType, channel: 'trade', instId: cleanSym }] }));
         }
     };
 
@@ -356,7 +394,7 @@ function connectExchange(exIndex, exName, symbol) {
         try {
             const data = JSON.parse(event.data);
             
-            // --- ПАРСИНГ ТІКЕРА (ГРАФІК) ---
+            // --- ПАРСИНГ ТІКЕРА ---
             let price = null;
             if (exName.startsWith('Binance') && data.data && data.data.c) price = parseFloat(data.data.c); 
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('tickers') && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
@@ -368,27 +406,22 @@ function connectExchange(exIndex, exName, symbol) {
 
             if (price) updateLiveCandle(exIndex, price);
 
-            // --- ПАРСИНГ СТАКАНА (ORDER BOOK) ---
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) {
-                updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
-            } 
-            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
-                updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            }
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) {
-                const asks = data.result.asks || data.result.a || [];
-                const bids = data.result.bids || data.result.b || [];
-                updateObState(exIndex, 'snapshot', asks, bids); // order_book 20 повертає снепшот
-            }
-            else if (exName === 'MEXC' && data.channel === 'push.depth') {
-                updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
-            }
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}`) {
-                updateObState(exIndex, 'delta', data.d.asks, data.d.bids);
-            }
-            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) {
-                updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
-            }
+            // --- ПАРСИНГ СТАКАНА ---
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []);
+            else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}`) updateObState(exIndex, 'delta', data.d.asks, data.d.bids);
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
+
+            // --- ПАРСИНГ УГОД (ШАРІКИ) ---
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m);
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('publicTrade') && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('trades') && data.result) data.result.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
+            else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.v), data.data.T === 1);
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
+
         } catch (err) {}
     };
 

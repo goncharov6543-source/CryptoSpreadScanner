@@ -29,15 +29,6 @@ function formatPrice(p) {
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
-function getMinMove(price) {
-    if (!price) return 0.01;
-    if (price < 0.00001) return 0.000000001;
-    if (price < 0.001) return 0.0000001;
-    if (price < 1) return 0.0001;
-    if (price < 100) return 0.01;
-    return 0.1;
-}
-
 // ==========================================
 // 2. ГРАФІК (Lightweight Charts)
 // ==========================================
@@ -203,9 +194,9 @@ function handleTrade(exIndex, price, qty, isBuy) {
     const volUsdt = price * qty;
     const hist = tickHistory[exIndex];
     
-    // Схлопуємо однакові угоди по тій самій ціні підряд, щоб не спамити шаріки
+    // Агрегація однакових угод
     if (hist.length > 0) {
-        const last = hist[0];
+        const last = hist[0]; // Перший елемент - найновіший
         if (last.p === parseFloat(price) && last.isBuy === isBuy) {
             last.v += volUsdt;
             last.q += qty;
@@ -213,8 +204,9 @@ function handleTrade(exIndex, price, qty, isBuy) {
         }
     }
     
+    // Додаємо нову угоду (на початок масиву, щоб вона була x=0)
     hist.unshift({ p: parseFloat(price), q: parseFloat(qty), v: volUsdt, isBuy: isBuy });
-    if (hist.length > 100) hist.pop(); // Видаляємо те що вийшло за екран
+    if (hist.length > 200) hist.pop(); // Захист пам'яті
 }
 
 function normalizeObData(arr) {
@@ -253,17 +245,10 @@ function updateObState(exIndex, type, asksRaw, bidsRaw) {
     renderOrderBook(exIndex);
 }
 
-// Заповнюємо стакан пустими рядками при групуванні, щоб масштаб не пригав
 function aggregateDOM(levels, isAsk, precisionStr) {
-    if (!precisionStr || precisionStr === 'auto') {
-        const res = levels.slice(0, 15);
-        while (res.length < 15) res.push({ p: 0, q: 0 }); // Добиваємо пустими
-        return res;
-    }
-    
+    if (!precisionStr || precisionStr === 'auto') return levels;
     const p = parseFloat(precisionStr);
     const agg = {};
-    
     levels.forEach(lvl => {
         const val = lvl.p / p;
         let ap = isAsk ? Math.ceil(val) * p : Math.floor(val) * p;
@@ -271,22 +256,8 @@ function aggregateDOM(levels, isAsk, precisionStr) {
         if (!agg[ap]) agg[ap] = { p: ap, q: 0 };
         agg[ap].q += lvl.q;
     });
-
-    const sortedKeys = Object.keys(agg).map(parseFloat).sort((a,b) => a - b);
-    if (sortedKeys.length === 0) {
-        const res = [];
-        for(let i=0; i<15; i++) res.push({ p: 0, q: 0 });
-        return res;
-    }
-
-    let bestPrice = isAsk ? sortedKeys[0] : sortedKeys[sortedKeys.length - 1];
-    const res = [];
-    for (let i = 0; i < 15; i++) {
-        let cp = isAsk ? bestPrice + (i * p) : bestPrice - (i * p);
-        cp = parseFloat(cp.toFixed(8));
-        res.push({ p: cp, q: agg[cp] ? agg[cp].q : 0 });
-    }
-    
+    const res = Object.values(agg);
+    res.sort((a, b) => isAsk ? a.p - b.p : b.p - a.p);
     return res;
 }
 
@@ -295,8 +266,8 @@ function renderOrderBook(exIndex) {
     const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
     if (!asksContainer || !bidsContainer) return;
 
-    const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).reverse();
-    const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision);
+    const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
+    const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
 
     let maxVal = 0;
     const processQty = (lvl) => {
@@ -308,28 +279,30 @@ function renderOrderBook(exIndex) {
     const scaleMult = domConfig.scale / 100;
     const fontSize = 0.85 * scaleMult;
 
+    // Малюємо АСКИ (з пустими рядками для стабільної висоти)
     let asksHtml = '';
+    const emptyAsksCount = 15 - asks.length;
+    for (let i = 0; i < emptyAsksCount; i++) {
+        asksHtml += `<div class="ob-row empty" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: 0%;"></div><span class="ob-price c-ask">-</span><span class="ob-qty">-</span></div>`;
+    }
     asks.forEach(a => {
-        if (a.p === 0) {
-            asksHtml += `<div class="ob-row empty" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: 0%;"></div><span class="ob-price c-ask">-</span><span class="ob-qty">-</span></div>`;
-        } else {
-            const width = maxVal > 0 ? (a.displayVal / maxVal) * 100 : 0;
-            let txt = a.displayVal >= 1000 ? (a.displayVal/1000).toFixed(1) + 'k' : a.displayVal.toFixed(2);
-            asksHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${txt}</span></div>`;
-        }
+        const width = maxVal > 0 ? (a.displayVal / maxVal) * 100 : 0;
+        let txt = a.displayVal >= 1000 ? (a.displayVal/1000).toFixed(1) + 'k' : a.displayVal.toFixed(2);
+        asksHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${txt}</span></div>`;
     });
     asksContainer.innerHTML = asksHtml;
 
+    // Малюємо БІДИ
     let bidsHtml = '';
     bids.forEach(b => {
-        if (b.p === 0) {
-            bidsHtml += `<div class="ob-row empty" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: 0%;"></div><span class="ob-price c-bid">-</span><span class="ob-qty">-</span></div>`;
-        } else {
-            const width = maxVal > 0 ? (b.displayVal / maxVal) * 100 : 0;
-            let txt = b.displayVal >= 1000 ? (b.displayVal/1000).toFixed(1) + 'k' : b.displayVal.toFixed(2);
-            bidsHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${txt}</span></div>`;
-        }
+        const width = maxVal > 0 ? (b.displayVal / maxVal) * 100 : 0;
+        let txt = b.displayVal >= 1000 ? (b.displayVal/1000).toFixed(1) + 'k' : b.displayVal.toFixed(2);
+        bidsHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${txt}</span></div>`;
     });
+    const emptyBidsCount = 15 - bids.length;
+    for (let i = 0; i < emptyBidsCount; i++) {
+        bidsHtml += `<div class="ob-row empty" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: 0%;"></div><span class="ob-price c-bid">-</span><span class="ob-qty">-</span></div>`;
+    }
     bidsContainer.innerHTML = bidsHtml;
 }
 
@@ -338,8 +311,8 @@ function renderOrderBook(exIndex) {
 // ==========================================
 function drawTicksLoop() {
     const scaleMult = domConfig.scale / 100;
-    const stepX = 40 * scaleMult; 
-    const paddingRight = 20 * scaleMult; 
+    const stepX = 35 * scaleMult; // Відстань між шаріками
+    const paddingRight = 15 * scaleMult; 
 
     [1, 2].forEach(exIndex => {
         const canvas = document.getElementById(`ticks-canvas-${exIndex}`);
@@ -361,16 +334,19 @@ function drawTicksLoop() {
         const hist = tickHistory[exIndex];
         if (hist.length === 0) return;
 
-        const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).reverse();
-        const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision);
-        
-        const maxP = asks.length > 0 && asks[0].p !== 0 ? asks[0].p : currentP1; 
-        const minP = bids.length > 0 && bids[bids.length - 1].p !== 0 ? bids[bids.length - 1].p : currentP1; 
+        // Беремо агрегований стакан для правильної висоти (тільки заповнені рядки)
+        const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
+        const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
+        if (asks.length === 0 || bids.length === 0) return;
+
+        // Розраховуємо ціновий діапазон стакану
+        const maxP = asks.length > 0 ? asks[0].p : currentP1; // Верхній рядок Асків
+        const minP = bids.length > 0 ? bids[bids.length - 1].p : currentP1; // Нижній рядок Бідів
         if (maxP === minP) return;
 
-        const rowH = h / 31; 
+        const rowH = h / 31; // 15 + 1 + 15 рядків
 
-        // Малюємо лінію
+        // Відмальовуємо лінію з'єднання
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(132, 142, 156, 0.6)';
         ctx.lineWidth = 2 * scaleMult;
@@ -379,27 +355,34 @@ function drawTicksLoop() {
         for (let i = 0; i < hist.length; i++) {
             const tick = hist[i];
             const x = w - paddingRight - (i * stepX);
-            if (x < -100) { hist.splice(i); break; } // Видаляємо те що вийшло за екран
-            const y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
+            
+            // Якщо шарік вийшов за лівий екран - відрізаємо всю стару історію
+            if (x < -100) { hist.splice(i); break; }
+
+            // Позиція Y: відступ зверху (для порожніх асків) + розрахунок
+            const emptyAsksOffset = (15 - asks.length) * rowH;
+            const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
+
             if (validPoints === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             validPoints++;
         }
         ctx.stroke();
 
-        // Малюємо шаріки (в зворотньому порядку)
+        // Відмальовуємо самі шаріки (в зворотньому порядку, щоб нові були поверх)
         for (let i = hist.length - 1; i >= 0; i--) {
             const tick = hist[i];
             const x = w - paddingRight - (i * stepX);
-            const y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
+            
+            const emptyAsksOffset = (15 - asks.length) * rowH;
+            const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
             
             if (y < -20 || y > h + 20) continue; 
 
-            // Розмір бульбашки Х2.5
-            let r = 12 * scaleMult; 
-            if (tick.v >= 50000) r = 45 * scaleMult;      
-            else if (tick.v >= 15000) r = 35 * scaleMult; 
-            else if (tick.v >= 5000) r = 25 * scaleMult;  
-            else if (tick.v >= 1000) r = 18 * scaleMult;  
+            let r = 10 * scaleMult; // Базовий розмір (в 2.5р більший ніж був)
+            if (tick.v >= 50000) r = 45 * scaleMult;      // Кит
+            else if (tick.v >= 15000) r = 30 * scaleMult; // Великий
+            else if (tick.v >= 5000) r = 20 * scaleMult;  // Середній
+            else if (tick.v >= 1000) r = 15 * scaleMult;  // Малий
             
             ctx.beginPath();
             ctx.arc(x, y, r, 0, 2 * Math.PI);
@@ -410,16 +393,16 @@ function drawTicksLoop() {
             ctx.lineWidth = 2 * scaleMult;
             ctx.stroke();
             
-            // Текст 
+            // Текст (Пишемо у всіх шаріках)
             const val = domConfig.volType === 'USDT' ? tick.v : tick.q;
             let txt = '';
             if (val >= 1000000) txt = (val/1000000).toFixed(2) + 'M';
-            else if (val >= 1000) txt = (val/1000).toFixed(1).replace('.0','') + 'k';
+            else if (val >= 1000) txt = (val/1000).toFixed(1) + 'k';
             else if (val >= 10) txt = val.toFixed(0);
             else txt = val.toFixed(1);
 
             ctx.fillStyle = '#fff';
-            ctx.font = `bold ${Math.max(10, r * 0.75)}px monospace`;
+            ctx.font = `bold ${Math.max(10, r * 0.7)}px monospace`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             ctx.fillText(txt, x, y);
@@ -430,6 +413,7 @@ function drawTicksLoop() {
 }
 
 requestAnimationFrame(drawTicksLoop);
+
 
 // ==========================================
 // 7. WEBSOCKETS (Підключення)
@@ -507,12 +491,9 @@ function connectExchange(exIndex, exName, symbol) {
             // 2. СТАКАН
             if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) {
-                const action = data.event === 'all' ? 'snapshot' : 'delta';
-                updateObState(exIndex, action, data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
-            }
-            else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
-            else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
+            else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api')) updateObState(exIndex, 'snapshot', data.d.asks, data.d.bids);
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
 
             // 3. УГОДИ (ШАРІКИ)
@@ -527,10 +508,10 @@ function connectExchange(exIndex, exName, symbol) {
             }
             else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
-                deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.T == 1));
+                deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.T === 1));
             }
             else if (exName === 'MEXC Spot' && data.c && data.c.includes('deals.v3.api') && data.d && data.d.deals) {
-                data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S == 1));
+                data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
             }
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) {
                 data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
@@ -565,7 +546,6 @@ setInterval(() => {
         if (exName.startsWith('Bybit')) ws.send(JSON.stringify({ op: 'ping' }));
         else if (exName === 'Gate.io') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'futures.ping' }));
         else if (exName === 'Gate.io Spot') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'spot.ping' }));
-        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'PING' }));
         else if (exName.startsWith('MEXC')) ws.send(JSON.stringify({ method: 'ping' }));
         else if (exName.startsWith('Bitget')) ws.send('ping');
     };

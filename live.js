@@ -212,7 +212,7 @@ function normalizeObData(arr) {
     return arr.map(item => {
         if (Array.isArray(item)) return { p: parseFloat(item[0]), q: parseFloat(item[1]) };
         let p = item.p !== undefined ? item.p : (item.price !== undefined ? item.price : 0);
-        let q = item.q !== undefined ? item.q : (item.s !== undefined ? item.s : (item.v !== undefined ? item.v : (item.size !== undefined ? item.size : (item.amount !== undefined ? item.amount : 0))));
+        let q = item.q !== undefined ? item.q : (item.quantity !== undefined ? item.quantity : (item.s !== undefined ? item.s : (item.v !== undefined ? item.v : (item.size !== undefined ? item.size : (item.amount !== undefined ? item.amount : 0)))));
         return { p: parseFloat(p), q: parseFloat(q) };
     });
 }
@@ -431,7 +431,7 @@ function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
     else if (exName === 'Gate.io Spot') wsUrl = 'wss://api.gateio.ws/ws/v4/';
     else if (exName === 'MEXC') wsUrl = 'wss://contract.mexc.com/edge';
-    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs-api.mexc.com/ws'; // ОНОВЛЕНИЙ ЕНДПОІНТ MEXC
+    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs-api.mexc.com/ws'; 
     else if (exName === 'Bitget') wsUrl = 'wss://ws.bitget.com/mix/v1/stream';
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
@@ -464,7 +464,7 @@ function connectExchange(exIndex, exName, symbol) {
         } else if (exName === 'MEXC Spot') {
             const spotSubs = [
                 `spot@public.deals.v3.api@${subSym}`,
-                `spot@public.limit.depth.v3.api@${subSym}@5`, // ОНОВЛЕНО: Знижено до 5 рівнів для уникнення блокувань
+                `spot@public.limit.depth.v3.api@${subSym}@5`, 
                 `spot@public.bookTicker.v3.api@${subSym}` 
             ];
             
@@ -492,6 +492,76 @@ function connectExchange(exIndex, exName, symbol) {
             
             if (data.code !== undefined && data.code !== 0 && data.code !== 200) {
                 console.error(`⚠️ [API Помилка] ${exName} повернула помилку:`, data);
+            }
+
+            // ==========================================
+            // ФОЛЛБЕК ДЛЯ ЗАБЛОКОВАНИХ МОНЕТ MEXC (REST API POLLING)
+            // ==========================================
+            if (exName === 'MEXC Spot' && data.msg && typeof data.msg === 'string' && data.msg.includes('Blocked')) {
+                if (!window[`mexc_rest_fallback_${exIndex}`]) {
+                    window[`mexc_rest_fallback_${exIndex}`] = true;
+                    console.warn(`🚨 [MEXC WS БЛОКУВАННЯ] MEXC відхилив WebSocket підписку для ${subSym}. Переходимо на надійний REST API (Polling кожні 1.5с)...`);
+                    
+                    const midContainer = document.getElementById(`ob-mid-${exIndex}`);
+                    if (midContainer) midContainer.style.color = '#f1c40f'; 
+                    
+                    ws.close(); 
+
+                    let isRateLimited = false;
+
+                    const pollMexcRest = async () => {
+                        if (isRateLimited) return;
+
+                        try {
+                            const [depthRes, tradesRes, tickerRes] = await Promise.all([
+                                axios.get(`https://api.mexc.com/api/v3/depth?symbol=${subSym}&limit=15`),
+                                axios.get(`https://api.mexc.com/api/v3/trades?symbol=${subSym}&limit=15`),
+                                axios.get(`https://api.mexc.com/api/v3/ticker/price?symbol=${subSym}`)
+                            ]);
+
+                            if (depthRes.data && depthRes.data.asks) {
+                                updateObState(exIndex, 'snapshot', depthRes.data.asks, depthRes.data.bids);
+                            }
+                            
+                            if (tradesRes.data && tradesRes.data.length > 0) {
+                                window[`mexc_last_time_${exIndex}`] = window[`mexc_last_time_${exIndex}`] || 0;
+                                window[`mexc_keys_${exIndex}`] = window[`mexc_keys_${exIndex}`] || new Set();
+                                
+                                let lastT = window[`mexc_last_time_${exIndex}`];
+                                let keys = window[`mexc_keys_${exIndex}`];
+                                let newMax = lastT;
+
+                                tradesRes.data.forEach(t => {
+                                    const key = `${t.time}_${t.price}_${t.qty}`; 
+                                    if (t.time >= lastT && !keys.has(key)) {
+                                        handleTrade(exIndex, parseFloat(t.price), parseFloat(t.qty), !t.isBuyerMaker);
+                                        keys.add(key);
+                                        if (t.time > newMax) newMax = t.time;
+                                    }
+                                });
+
+                                window[`mexc_last_time_${exIndex}`] = newMax;
+                                if (keys.size > 150) window[`mexc_keys_${exIndex}`] = new Set(Array.from(keys).slice(-50));
+                            }
+                            
+                            if (tickerRes.data && tickerRes.data.price) {
+                                updateLiveCandle(exIndex, parseFloat(tickerRes.data.price));
+                            }
+                        } catch (err) {
+                            if (err.response && (err.response.status === 429 || err.response.status === 418)) {
+                                console.warn(`⏳ [MEXC API LIMIT] Біржа просить збавити темп. Пауза REST запитів на 10 секунд...`);
+                                isRateLimited = true;
+                                setTimeout(() => {
+                                    console.log(`▶️ [MEXC API LIMIT] Пауза закінчилась, продовжуємо завантаження.`);
+                                    isRateLimited = false;
+                                }, 10000);
+                            }
+                        }
+                    };
+
+                    pollMexcRest(); 
+                    setInterval(pollMexcRest, 1500); 
+                }
             }
 
             if (exName.includes('MEXC') && !window[`mexc_debug_${exIndex}`]) { window[`mexc_debug_${exIndex}`] = 0; }
@@ -556,10 +626,15 @@ function connectExchange(exIndex, exName, symbol) {
     };
 
     ws.onclose = (event) => {
-        console.warn(`🔌 [WS Закрито] ${exName} - Код: ${event.code}, Причина: ${event.reason || 'невідомо'}. Спроба реконекту...`);
+        console.warn(`🔌 [WS Закрито] ${exName} - Код: ${event.code}.`);
         if (exIndex === 1) ws1Active = false; else ws2Active = false;
         updateStatusDot();
-        setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
+        
+        if (!window[`mexc_rest_fallback_${exIndex}`]) {
+            setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
+        } else {
+            console.log(`[WS] Реконект скасовано, працює надійний REST Fallback.`);
+        }
     };
 
     return ws;

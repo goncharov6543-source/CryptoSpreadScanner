@@ -419,7 +419,6 @@ function connectExchange(exIndex, exName, symbol) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     let wsUrl = '';
     
-    // АВТО-НОРМАЛІЗАТОР СИМВОЛУ ДЛЯ СПОТОВИХ БІРЖ (відрізає 1000)
     let subSym = cleanSym;
     if (exName.includes('Spot') && subSym.startsWith('1000') && !subSym.includes('SATS')) {
         subSym = subSym.replace(/^10000?/, '');
@@ -432,7 +431,7 @@ function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
     else if (exName === 'Gate.io Spot') wsUrl = 'wss://api.gateio.ws/ws/v4/';
     else if (exName === 'MEXC') wsUrl = 'wss://contract.mexc.com/edge';
-    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs.mexc.com/ws';
+    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs-api.mexc.com/ws'; // ОНОВЛЕНИЙ ЕНДПОІНТ MEXC
     else if (exName === 'Bitget') wsUrl = 'wss://ws.bitget.com/mix/v1/stream';
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
@@ -463,10 +462,9 @@ function connectExchange(exIndex, exName, symbol) {
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: subSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: subSym.replace('USDT', '_USDT') } }));
         } else if (exName === 'MEXC Spot') {
-            // РОЗДІЛЕНА ПІДПИСКА MEXC SPOT (Щоб не крашило весь вебсокет через один канал)
             const spotSubs = [
                 `spot@public.deals.v3.api@${subSym}`,
-                `spot@public.limit.depth.v3.api@${subSym}@10`, // Знижено до 10 рівнів для стабільності
+                `spot@public.limit.depth.v3.api@${subSym}@5`, // ОНОВЛЕНО: Знижено до 5 рівнів для уникнення блокувань
                 `spot@public.bookTicker.v3.api@${subSym}` 
             ];
             
@@ -476,7 +474,7 @@ function connectExchange(exIndex, exName, symbol) {
                         console.log(`[WS Відправка підписки] MEXC Spot:`, subChannel);
                         ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [subChannel] }));
                     }
-                }, i * 150); // Відправляємо з затримкою 150мс
+                }, i * 150);
             });
         } else if (exName.startsWith('Bitget')) {
             const instType = exName.includes('Spot') ? 'SP' : 'USDT-FUTURES';

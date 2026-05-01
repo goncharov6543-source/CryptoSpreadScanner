@@ -41,7 +41,8 @@ let settings = {
     autoStart: false,
     savedPositions: {}, 
     openDates: {}, 
-    positionHistory: [] 
+    positionHistory: [],
+    spotMemory: {} // Пам'ять для заморозки цін входу на споті
 };
 
 function saveSettingsToLocal() {
@@ -161,6 +162,42 @@ function formatSmallPrice(p) {
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
+// Функція для заморозки цін споту
+function applySpotMemory(posArray) {
+    if (!settings.spotMemory) settings.spotMemory = {};
+    const currentKeys = new Set();
+
+    posArray.forEach(p => {
+        if (p.exchange.includes('Spot')) {
+            const key = `${p.exchange}_${p.cleanSymbol}`;
+            currentKeys.add(key);
+
+            if (!settings.spotMemory[key]) {
+                settings.spotMemory[key] = { price: p.entryPrice, qty: p.sizeTokens };
+            } else {
+                const mem = settings.spotMemory[key];
+                if (p.sizeTokens > mem.qty * 1.02) { // 2% запас на дрібні погрішності
+                    const addedQty = p.sizeTokens - mem.qty;
+                    const newAvgPrice = ((mem.price * mem.qty) + (p.entryPrice * addedQty)) / p.sizeTokens;
+                    mem.price = newAvgPrice;
+                    mem.qty = p.sizeTokens;
+                } else {
+                    mem.qty = p.sizeTokens;
+                }
+                p.entryPrice = mem.price;
+                p.sizeUSDT = p.sizeTokens * p.entryPrice;
+            }
+        }
+    });
+
+    Object.keys(settings.spotMemory).forEach(key => {
+        if (!currentKeys.has(key)) delete settings.spotMemory[key];
+    });
+
+    saveSettingsToLocal();
+    return posArray;
+}
+
 // --- БАЛАНСИ ТА РЕАЛЬНІ API ---
 async function updateBalancesUI() {
     const btn = document.getElementById('btn-ex-status');
@@ -174,10 +211,13 @@ async function updateBalancesUI() {
         return;
     }
 
-    const [result, currentPositions] = await Promise.all([
+    const [result, currentPositionsRaw] = await Promise.all([
         fetchBalances(settings.apiKeys),
         fetchPositions(settings.apiKeys)
     ]);
+    
+    // Застосовуємо заморожені ціни до споту
+    const currentPositions = applySpotMemory(currentPositionsRaw);
 
     const hasOpenPositions = currentPositions.length > 0;
 
@@ -351,6 +391,7 @@ async function loadTop10Patterns(top10) {
     let count = 0;
     for (let item of top10) {
         if (!patternStats[item.cleanSymbol]) {
+            patternStats[item.cleanSymbol] = { isReady: false };
             await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
             await new Promise(r => setTimeout(r, 800)); 
         }
@@ -373,8 +414,8 @@ async function loadNewCoinsPatternsBackground(arbList) {
     if (isBackgroundLoading) return;
     isBackgroundLoading = true;
     for (let item of arbList) {
-        const stat = patternStats[item.cleanSymbol];
-        if (!stat || (!stat.isReady && stat.status !== 'error' && stat.status !== 'loading')) {
+        if (!patternStats[item.cleanSymbol]) {
+            patternStats[item.cleanSymbol] = { isReady: false };
             await calculateCoinPattern(item.cleanSymbol, item.buyEx, item.sellEx);
             await new Promise(r => setTimeout(r, 1000));
             if (document.getElementById('tab-2').classList.contains('active')) {
@@ -385,16 +426,6 @@ async function loadNewCoinsPatternsBackground(arbList) {
     }
     isBackgroundLoading = false;
 }
-
-// Функція повторної спроби при помилці завантаження
-window.retryPattern = function(symbol, buyEx, sellEx) {
-    if (patternStats[symbol]) {
-        patternStats[symbol].status = 'loading';
-        patternStats[symbol].startTime = Date.now();
-    }
-    window.processSidebar();
-    calculateCoinPattern(symbol, buyEx, sellEx);
-};
 
 // --- СЛАЙДЕР ТА МЕНЮ ---
 const numTabs = 4;
@@ -594,7 +625,7 @@ async function fetchMarketData() {
         if(!settings.blacklist) settings.blacklist = []; 
 
         let positiveFunding = [], negativeFunding = [], priceArbOpps = [];
-        let currentCycleSeen = new Set(); 
+        let currentCycleSeen = new Set(); // Відслідковуємо монети поточного циклу для подвійної перевірки спайку
 
         Object.keys(crossData).forEach(cleanSymbol => {
             const exMap = crossData[cleanSymbol];
@@ -637,6 +668,7 @@ async function fetchMarketData() {
                             if (pairFilter === 'FUT' && typeTag !== 'FUT ↔ FUT') continue;
                             if (pairFilter === 'SPOT' && typeTag !== 'SPOT 🟢 ↔ FUT 🔴') continue;
 
+                            // Механіка подвійної перевірки спайку (req 5)
                             const arbKey = `${cleanSymbol}_${ex1N}_${ex2N}`;
                             currentCycleSeen.add(arbKey);
 
@@ -646,6 +678,7 @@ async function fetchMarketData() {
                                 pendingArbOpps[arbKey]++;
                             }
 
+                            // Якщо монета пройшла 3 перевірки підряд (перша + 2 додаткові)
                             if (pendingArbOpps[arbKey] >= 3) {
                                 priceArbOpps.push({
                                     cleanSymbol, spreadPct: spread, typeTag: typeTag,
@@ -672,6 +705,7 @@ async function fetchMarketData() {
             }
         });
 
+        // Очищення тих монет, які пропали і не пройшли подвійну перевірку
         Object.keys(pendingArbOpps).forEach(key => {
             if (!currentCycleSeen.has(key)) {
                 delete pendingArbOpps[key];
@@ -687,6 +721,7 @@ async function fetchMarketData() {
 
         currentArbOpps = finalArb;
 
+        // --- ЛОГІКА ЗАВАНТАЖЕННЯ АНАЛІЗУ СПРЕДІВ ---
         if (document.getElementById('tab-2').classList.contains('active') && !top10LoadingDone && !isTop10Loading && finalArb.length > 0) {
             loadTop10Patterns(finalArb.slice(0, 10));
         } else if (top10LoadingDone) {
@@ -710,7 +745,7 @@ async function fetchMarketData() {
     } catch (error) { document.getElementById('global-status').innerHTML = `🔴 OFFLINE`; }
 }
 
-// --- РЕНДЕР ВІДКРИТИХ ПОЗИЦІЙ ---
+// --- РЕНДЕР ВІДКРИТИХ ПОЗИЦІЙ (СПРОЩЕНО) ---
 async function renderPositionsTab() {
     const loader = document.getElementById('pos-loader');
     const container = document.getElementById('pos-content');
@@ -726,7 +761,10 @@ async function renderPositionsTab() {
     }
 
     try {
-        const posArray = await fetchPositions(settings.apiKeys);
+        const posArrayRaw = await fetchPositions(settings.apiKeys);
+        
+        // Застосовуємо заморожені ціни до споту
+        const posArray = applySpotMemory(posArrayRaw);
 
         if (posArray.length === 0) {
             loader.style.display = 'none';

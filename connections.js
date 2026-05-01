@@ -203,7 +203,7 @@ async function fetchPositions(apiKeys) {
                             const val = amt * price;
                             if (val > 1) { 
                                 allPositions.push({
-                                    exchange: ex + ' Spot', symbol: b.asset + 'USDT', cleanSymbol: b.asset, side: 'Long',
+                                    exchange: ex + ' Spot', symbol: b.asset + 'USDT', cleanSymbol: b.asset + 'USDT', side: 'Long',
                                     sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: price, unRealized: 0, realized: 0
                                 });
                             }
@@ -253,7 +253,7 @@ async function fetchPositions(apiKeys) {
                                 const val = parseFloat(c.usdValue);
                                 if (val > 1) {
                                     allPositions.push({
-                                        exchange: ex + ' Spot', symbol: c.coin + 'USDT', cleanSymbol: c.coin, side: 'Long',
+                                        exchange: ex + ' Spot', symbol: c.coin + 'USDT', cleanSymbol: c.coin + 'USDT', side: 'Long',
                                         sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: val/amt, unRealized: 0, realized: 0
                                     });
                                 }
@@ -318,7 +318,7 @@ async function fetchPositions(apiKeys) {
                             const val = amt * price;
                             if (val > 1) {
                                 allPositions.push({
-                                    exchange: ex + ' Spot', symbol: b.asset + 'USDT', cleanSymbol: b.asset, side: 'Long',
+                                    exchange: ex + ' Spot', symbol: b.asset + 'USDT', cleanSymbol: b.asset + 'USDT', side: 'Long',
                                     sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: price, unRealized: 0, realized: 0
                                 });
                             }
@@ -371,7 +371,7 @@ async function fetchPositions(apiKeys) {
                             const val = amt * price;
                             if (val > 1) {
                                 allPositions.push({
-                                    exchange: ex + ' Spot', symbol: b.currency + '_USDT', cleanSymbol: b.currency, side: 'Long',
+                                    exchange: ex + ' Spot', symbol: b.currency + '_USDT', cleanSymbol: b.currency + 'USDT', side: 'Long',
                                     sizeUSDT: val, sizeTokens: amt, leverage: 1, entryPrice: price, unRealized: 0, realized: 0
                                 });
                             }

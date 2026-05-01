@@ -29,17 +29,8 @@ function formatPrice(p) {
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
-function getMinMove(price) {
-    if (!price) return 0.01;
-    if (price < 0.00001) return 0.000000001;
-    if (price < 0.001) return 0.0000001;
-    if (price < 1) return 0.0001;
-    if (price < 100) return 0.01;
-    return 0.1;
-}
-
 // ==========================================
-// 2. ГРАФІК (Lightweight Charts) ТА ІНТЕРФЕЙС
+// 2. ГРАФІК (Lightweight Charts)
 // ==========================================
 const chartOptions = {
     layout: { textColor: '#d1d4dc', background: { type: 'solid', color: '#0b0e11' } },
@@ -51,45 +42,24 @@ const chartOptions = {
 
 const chartContainer = document.getElementById('chart-container');
 const chart = LightweightCharts.createChart(chartContainer, chartOptions);
+const series1 = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', title: ex1NameFormat });
+const series2 = chart.addCandlestickSeries({ upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat });
 
-const series1 = chart.addCandlestickSeries({
-    upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-    wickUpColor: '#26a69a', wickDownColor: '#ef5350', title: ex1NameFormat
-});
+window.addEventListener('resize', () => { chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); });
 
-const series2 = chart.addCandlestickSeries({
-    upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false,
-    wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat
-});
-
-window.addEventListener('resize', () => {
-    chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
-});
-
-// Спліттер
 const resizer = document.getElementById('resizer');
 const chartWrapper = document.getElementById('chart-wrapper');
 let isResizing = false;
 
-resizer.addEventListener('mousedown', () => {
-    isResizing = true;
-    document.body.style.userSelect = 'none'; 
-});
-
+resizer.addEventListener('mousedown', () => { isResizing = true; document.body.style.userSelect = 'none'; });
 document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
-    const totalWidth = document.body.clientWidth;
-    let newWidthPct = (e.clientX / totalWidth) * 100;
-    if (newWidthPct < 20) newWidthPct = 20;
-    if (newWidthPct > 80) newWidthPct = 80;
+    let newWidthPct = (e.clientX / document.body.clientWidth) * 100;
+    if (newWidthPct < 20) newWidthPct = 20; if (newWidthPct > 80) newWidthPct = 80;
     chartWrapper.style.width = newWidthPct + '%';
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
-
-document.addEventListener('mouseup', () => {
-    isResizing = false;
-    document.body.style.userSelect = 'auto';
-});
+document.addEventListener('mouseup', () => { isResizing = false; document.body.style.userSelect = 'auto'; });
 
 window.setColorMode = function(mode) {
     if (mode === 'solid') {
@@ -107,18 +77,39 @@ let currentP1 = null, currentP2 = null;
 
 function updateLiveSpread() {
     if (currentP1 && currentP2 && currentP1 > 0) {
-        const spread = ((currentP2 - currentP1) / currentP1) * 100;
-        document.getElementById('header-spread').innerText = spread.toFixed(2) + '%';
+        document.getElementById('header-spread').innerText = (((currentP2 - currentP1) / currentP1) * 100).toFixed(2) + '%';
     }
 }
 
 // ==========================================
-// 3. ІСТОРІЯ ТА ОНОВЛЕННЯ ТАЙМФРЕЙМІВ
+// 3. НАЛАШТУВАННЯ СТАКАНА (Scale, Precision, Vol Type)
+// ==========================================
+let domConfig = { scale: 100, precision: 'auto', volType: 'USDT' };
+
+try {
+    const saved = localStorage.getItem('domConfig');
+    if (saved) domConfig = JSON.parse(saved);
+    document.getElementById('dom-scale').value = domConfig.scale;
+    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
+    document.getElementById('dom-precision').value = domConfig.precision;
+    document.getElementById('dom-vol-type').value = domConfig.volType;
+} catch(e) {}
+
+window.updateDomSettings = function() {
+    domConfig.scale = parseInt(document.getElementById('dom-scale').value);
+    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
+    domConfig.precision = document.getElementById('dom-precision').value;
+    domConfig.volType = document.getElementById('dom-vol-type').value;
+    localStorage.setItem('domConfig', JSON.stringify(domConfig));
+    renderOrderBook(1); renderOrderBook(2);
+};
+
+// ==========================================
+// 4. ІСТОРІЯ ТА ОНОВЛЕННЯ ТАЙМФРЕЙМІВ
 // ==========================================
 window.changeInterval = async function(mins, btnElement) {
     document.querySelectorAll('.btn-interval').forEach(btn => btn.classList.remove('active'));
     if(btnElement) btnElement.classList.add('active');
-
     currentIntervalMins = mins;
 
     series1.setData([]); series2.setData([]);
@@ -130,22 +121,12 @@ window.changeInterval = async function(mins, btnElement) {
         fetchHistory(rawEx2Name, symbol, mins)
     ]);
 
-    let minMove = 0.01;
-    if (hist1.length > 0) minMove = getMinMove(hist1[0].close);
-    else if (hist2.length > 0) minMove = getMinMove(hist2[0].close);
+    const formatParams = { type: 'custom', minMove: 0.00000001, formatter: p => formatPrice(p) };
+    series1.applyOptions({ priceFormat: formatParams });
+    series2.applyOptions({ priceFormat: formatParams });
 
-    const customPriceFormat = { type: 'custom', minMove: minMove, formatter: p => formatPrice(p) };
-    series1.applyOptions({ priceFormat: customPriceFormat });
-    series2.applyOptions({ priceFormat: customPriceFormat });
-
-    if (hist1.length > 0) {
-        series1.setData(hist1); lastCandle1 = hist1[hist1.length - 1];
-        currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1);
-    }
-    if (hist2.length > 0) {
-        series2.setData(hist2); lastCandle2 = hist2[hist2.length - 1];
-        currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2);
-    }
+    if (hist1.length > 0) { series1.setData(hist1); lastCandle1 = hist1[hist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
+    if (hist2.length > 0) { series2.setData(hist2); lastCandle2 = hist2[hist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
     updateLiveSpread();
 };
 
@@ -154,11 +135,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
     const limit = 720; 
-
-    const bInterval = `${intervalMins}m`;
-    const bybInterval = `${intervalMins}`;
-    const bitgetSpotInt = `${intervalMins}min`;
-    const mexcFutInt = `Min${intervalMins}`;
+    const bInterval = `${intervalMins}m`; const bybInterval = `${intervalMins}`; const bitgetSpotInt = `${intervalMins}min`; const mexcFutInt = `Min${intervalMins}`;
 
     try {
         let url = '';
@@ -171,22 +148,11 @@ async function fetchHistory(exName, symbol, intervalMins) {
         if (!url) return [];
         const r = await axios.get(url, { timeout: 5000 });
         let data = [];
-
         if (ex === 'Binance') data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
         else if (ex === 'Bybit') data = r.data.result.list.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) })).reverse();
-        else if (ex === 'Gate.io') {
-            if (isSpot) data = r.data.map(k => ({ time: parseInt(k[0]), open: parseFloat(k[5]), high: parseFloat(k[3]), low: parseFloat(k[4]), close: parseFloat(k[2]) }));
-            else data = r.data.map(k => ({ time: parseInt(k.t), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c) }));
-        }
+        else if (ex === 'Gate.io') { if (isSpot) data = r.data.map(k => ({ time: parseInt(k[0]), open: parseFloat(k[5]), high: parseFloat(k[3]), low: parseFloat(k[4]), close: parseFloat(k[2]) })); else data = r.data.map(k => ({ time: parseInt(k.t), open: parseFloat(k.o), high: parseFloat(k.h), low: parseFloat(k.l), close: parseFloat(k.c) })); }
         else if (ex === 'Bitget') data = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
-        else if (ex === 'MEXC') {
-            if (isSpot) data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) }));
-            else if (r.data.data && r.data.data.time) {
-                const d = r.data.data;
-                for(let i=0; i<d.time.length; i++) data.push({ time: parseInt(d.time[i]), open: parseFloat(d.open[i]), high: parseFloat(d.high[i]), low: parseFloat(d.low[i]), close: parseFloat(d.close[i]) });
-                data = data.slice(-limit);
-            }
-        }
+        else if (ex === 'MEXC') { if (isSpot) data = r.data.map(k => ({ time: Math.floor(k[0]/1000), open: parseFloat(k[1]), high: parseFloat(k[2]), low: parseFloat(k[3]), close: parseFloat(k[4]) })); else if (r.data.data && r.data.data.time) { const d = r.data.data; for(let i=0; i<d.time.length; i++) data.push({ time: parseInt(d.time[i]), open: parseFloat(d.open[i]), high: parseFloat(d.high[i]), low: parseFloat(d.low[i]), close: parseFloat(d.close[i]) }); data = data.slice(-limit); } }
 
         data.sort((a, b) => a.time - b.time);
         const uniqueData = []; let lastTime = 0;
@@ -214,51 +180,39 @@ function updateLiveCandle(exIndex, price) {
         lastCandle = { time: currentCandleTime, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
     }
 
-    if (exIndex === 1) { lastCandle1 = lastCandle; currentP1 = price; } 
-    else { lastCandle2 = lastCandle; currentP2 = price; }
-
-    updateLiveSpread();
-    try { series.update(lastCandle); } catch(e) {}
+    if (exIndex === 1) { lastCandle1 = lastCandle; currentP1 = price; } else { lastCandle2 = lastCandle; currentP2 = price; }
+    updateLiveSpread(); try { series.update(lastCandle); } catch(e) {}
 }
-
-// ==========================================
-// 4. НАЛАШТУВАННЯ СТАКАНА (Scale & Precision)
-// ==========================================
-let domConfig = { scale: 100, precision: 'auto' };
-
-try {
-    const saved = localStorage.getItem('domConfig');
-    if (saved) domConfig = JSON.parse(saved);
-    document.getElementById('dom-scale').value = domConfig.scale;
-    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
-    document.getElementById('dom-precision').value = domConfig.precision;
-} catch(e) {}
-
-window.updateDomSettings = function() {
-    domConfig.scale = parseInt(document.getElementById('dom-scale').value);
-    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
-    domConfig.precision = document.getElementById('dom-precision').value;
-    localStorage.setItem('domConfig', JSON.stringify(domConfig));
-    renderOrderBook(1); renderOrderBook(2);
-};
 
 // ==========================================
 // 5. ДВИЖОК СТАКАНА ТА АГРЕГАЦІЯ
 // ==========================================
 let obState = { 1: { asks: [], bids: [] }, 2: { asks: [], bids: [] } };
-let tickHistory = { 1: [], 2: [] }; // Стрічка угод для шаріків
+let tickHistory = { 1: [], 2: [] }; 
 
 function handleTrade(exIndex, price, qty, isBuy) {
     const volUsdt = price * qty;
-    if (volUsdt < 10) return; // Фільтр спаму до 10$
-    tickHistory[exIndex].push({ p: parseFloat(price), v: volUsdt, isBuy: isBuy, t: Date.now() });
+    const hist = tickHistory[exIndex];
+    
+    // Агрегація однакових угод
+    if (hist.length > 0) {
+        const last = hist[0]; // Перший елемент - найновіший
+        if (last.p === parseFloat(price) && last.isBuy === isBuy) {
+            last.v += volUsdt;
+            last.q += qty;
+            return;
+        }
+    }
+    
+    // Додаємо нову угоду (на початок масиву, щоб вона була x=0)
+    hist.unshift({ p: parseFloat(price), q: parseFloat(qty), v: volUsdt, isBuy: isBuy });
+    if (hist.length > 200) hist.pop(); // Захист пам'яті
 }
 
 function normalizeObData(arr) {
     if (!arr) return [];
     return arr.map(item => {
         if (Array.isArray(item)) return { p: parseFloat(item[0]), q: parseFloat(item[1]) };
-        // Підтримка різних форматів (Binance, Bybit, Gate, MEXC)
         let p = item.p !== undefined ? item.p : (item.price !== undefined ? item.price : 0);
         let q = item.q !== undefined ? item.q : (item.s !== undefined ? item.s : (item.v !== undefined ? item.v : (item.size !== undefined ? item.size : 0)));
         return { p: parseFloat(p), q: parseFloat(q) };
@@ -291,7 +245,6 @@ function updateObState(exIndex, type, asksRaw, bidsRaw) {
     renderOrderBook(exIndex);
 }
 
-// Функція групування ліміток (Precision)
 function aggregateDOM(levels, isAsk, precisionStr) {
     if (!precisionStr || precisionStr === 'auto') return levels;
     const p = parseFloat(precisionStr);
@@ -299,7 +252,7 @@ function aggregateDOM(levels, isAsk, precisionStr) {
     levels.forEach(lvl => {
         const val = lvl.p / p;
         let ap = isAsk ? Math.ceil(val) * p : Math.floor(val) * p;
-        ap = parseFloat(ap.toFixed(8)); // Захист від JavaScript float-багів
+        ap = parseFloat(ap.toFixed(8)); 
         if (!agg[ap]) agg[ap] = { p: ap, q: 0 };
         agg[ap].q += lvl.q;
     });
@@ -311,32 +264,45 @@ function aggregateDOM(levels, isAsk, precisionStr) {
 function renderOrderBook(exIndex) {
     const asksContainer = document.getElementById(`ob-asks-${exIndex}`);
     const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
-    
     if (!asksContainer || !bidsContainer) return;
 
-    // Агрегуємо стакан
     const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
     const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
 
-    let maxQty = 0;
-    asks.forEach(a => { if(a.q > maxQty) maxQty = a.q; });
-    bids.forEach(b => { if(b.q > maxQty) maxQty = b.q; });
+    let maxVal = 0;
+    const processQty = (lvl) => {
+        lvl.displayVal = domConfig.volType === 'USDT' ? lvl.q * lvl.p : lvl.q;
+        if (lvl.displayVal > maxVal) maxVal = lvl.displayVal;
+    };
+    asks.forEach(processQty); bids.forEach(processQty);
 
     const scaleMult = domConfig.scale / 100;
     const fontSize = 0.85 * scaleMult;
 
+    // Малюємо АСКИ (з пустими рядками для стабільної висоти)
     let asksHtml = '';
+    const emptyAsksCount = 15 - asks.length;
+    for (let i = 0; i < emptyAsksCount; i++) {
+        asksHtml += `<div class="ob-row empty" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: 0%;"></div><span class="ob-price c-ask">-</span><span class="ob-qty">-</span></div>`;
+    }
     asks.forEach(a => {
-        const width = maxQty > 0 ? (a.q / maxQty) * 100 : 0;
-        asksHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${a.q.toFixed(2)}</span></div>`;
+        const width = maxVal > 0 ? (a.displayVal / maxVal) * 100 : 0;
+        let txt = a.displayVal >= 1000 ? (a.displayVal/1000).toFixed(1) + 'k' : a.displayVal.toFixed(2);
+        asksHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${txt}</span></div>`;
     });
     asksContainer.innerHTML = asksHtml;
 
+    // Малюємо БІДИ
     let bidsHtml = '';
     bids.forEach(b => {
-        const width = maxQty > 0 ? (b.q / maxQty) * 100 : 0;
-        bidsHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${b.q.toFixed(2)}</span></div>`;
+        const width = maxVal > 0 ? (b.displayVal / maxVal) * 100 : 0;
+        let txt = b.displayVal >= 1000 ? (b.displayVal/1000).toFixed(1) + 'k' : b.displayVal.toFixed(2);
+        bidsHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${txt}</span></div>`;
     });
+    const emptyBidsCount = 15 - bids.length;
+    for (let i = 0; i < emptyBidsCount; i++) {
+        bidsHtml += `<div class="ob-row empty" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: 0%;"></div><span class="ob-price c-bid">-</span><span class="ob-qty">-</span></div>`;
+    }
     bidsContainer.innerHTML = bidsHtml;
 }
 
@@ -344,9 +310,9 @@ function renderOrderBook(exIndex) {
 // 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД (CANVAS)
 // ==========================================
 function drawTicksLoop() {
-    const TIME_WINDOW = 12000; 
-    const now = Date.now();
     const scaleMult = domConfig.scale / 100;
+    const stepX = 35 * scaleMult; // Відстань між шаріками
+    const paddingRight = 15 * scaleMult; 
 
     [1, 2].forEach(exIndex => {
         const canvas = document.getElementById(`ticks-canvas-${exIndex}`);
@@ -365,69 +331,82 @@ function drawTicksLoop() {
         const h = rect.height;
         ctx.clearRect(0, 0, w, h);
 
-        tickHistory[exIndex] = tickHistory[exIndex].filter(tick => now - tick.t <= TIME_WINDOW);
-        if (tickHistory[exIndex].length === 0) return;
+        const hist = tickHistory[exIndex];
+        if (hist.length === 0) return;
 
-        // Беремо агрегований стакан для правильної висоти
+        // Беремо агрегований стакан для правильної висоти (тільки заповнені рядки)
         const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
         const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
         if (asks.length === 0 || bids.length === 0) return;
 
-        const maxP = asks[0].p;
-        const minP = bids[bids.length - 1].p;
+        // Розраховуємо ціновий діапазон стакану
+        const maxP = asks.length > 0 ? asks[0].p : currentP1; // Верхній рядок Асків
+        const minP = bids.length > 0 ? bids[bids.length - 1].p : currentP1; // Нижній рядок Бідів
         if (maxP === minP) return;
 
-        const rowH = h / 31; 
+        const rowH = h / 31; // 15 + 1 + 15 рядків
 
+        // Відмальовуємо лінію з'єднання
         ctx.beginPath();
-        ctx.strokeStyle = 'rgba(132, 142, 156, 0.4)';
-        ctx.lineWidth = 1.5;
-        let isFirst = true;
+        ctx.strokeStyle = 'rgba(132, 142, 156, 0.6)';
+        ctx.lineWidth = 2 * scaleMult;
         
-        tickHistory[exIndex].forEach(tick => {
-            const x = w - ((now - tick.t) / TIME_WINDOW) * w;
-            let y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
-            y = Math.max(-20, Math.min(h + 20, y));
+        let validPoints = 0;
+        for (let i = 0; i < hist.length; i++) {
+            const tick = hist[i];
+            const x = w - paddingRight - (i * stepX);
+            
+            // Якщо шарік вийшов за лівий екран - відрізаємо всю стару історію
+            if (x < -100) { hist.splice(i); break; }
 
-            if (isFirst) { ctx.moveTo(x, y); isFirst = false; }
-            else { ctx.lineTo(x, y); }
-        });
+            // Позиція Y: відступ зверху (для порожніх асків) + розрахунок
+            const emptyAsksOffset = (15 - asks.length) * rowH;
+            const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
+
+            if (validPoints === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            validPoints++;
+        }
         ctx.stroke();
 
-        tickHistory[exIndex].forEach(tick => {
-            const x = w - ((now - tick.t) / TIME_WINDOW) * w;
-            const y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
+        // Відмальовуємо самі шаріки (в зворотньому порядку, щоб нові були поверх)
+        for (let i = hist.length - 1; i >= 0; i--) {
+            const tick = hist[i];
+            const x = w - paddingRight - (i * stepX);
             
-            if (y < -20 || y > h + 20) return; 
+            const emptyAsksOffset = (15 - asks.length) * rowH;
+            const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
+            
+            if (y < -20 || y > h + 20) continue; 
 
-            // Розмір бульбашки з урахуванням Zoom (scaleMult)
-            let r = 5 * scaleMult; 
-            if (tick.v >= 20000) r = 18 * scaleMult;
-            else if (tick.v >= 5000) r = 14 * scaleMult;
-            else if (tick.v >= 1000) r = 10 * scaleMult;
-            else if (tick.v >= 100) r = 7 * scaleMult;
+            let r = 10 * scaleMult; // Базовий розмір (в 2.5р більший ніж був)
+            if (tick.v >= 50000) r = 45 * scaleMult;      // Кит
+            else if (tick.v >= 15000) r = 30 * scaleMult; // Великий
+            else if (tick.v >= 5000) r = 20 * scaleMult;  // Середній
+            else if (tick.v >= 1000) r = 15 * scaleMult;  // Малий
             
             ctx.beginPath();
             ctx.arc(x, y, r, 0, 2 * Math.PI);
-            ctx.fillStyle = tick.isBuy ? 'rgba(0, 214, 124, 0.5)' : 'rgba(231, 76, 60, 0.5)';
+            ctx.fillStyle = tick.isBuy ? 'rgba(0, 214, 124, 0.7)' : 'rgba(231, 76, 60, 0.7)';
             ctx.fill();
             
             ctx.strokeStyle = tick.isBuy ? '#00d67c' : '#e74c3c';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2 * scaleMult;
             ctx.stroke();
             
-            // Текст для середніх та великих
-            if (r >= 9) {
-                ctx.fillStyle = '#fff';
-                ctx.font = `bold ${r - 2}px monospace`;
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                let txt = '';
-                if (tick.v >= 1000) txt = (tick.v/1000).toFixed(1).replace('.0','') + 'k';
-                else txt = Math.floor(tick.v).toString();
-                ctx.fillText(txt, x, y);
-            }
-        });
+            // Текст (Пишемо у всіх шаріках)
+            const val = domConfig.volType === 'USDT' ? tick.v : tick.q;
+            let txt = '';
+            if (val >= 1000000) txt = (val/1000000).toFixed(2) + 'M';
+            else if (val >= 1000) txt = (val/1000).toFixed(1) + 'k';
+            else if (val >= 10) txt = val.toFixed(0);
+            else txt = val.toFixed(1);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = `bold ${Math.max(10, r * 0.7)}px monospace`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(txt, x, y);
+        }
     });
 
     requestAnimationFrame(drawTicksLoop);
@@ -514,7 +493,7 @@ function connectExchange(exIndex, exName, symbol) {
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
             else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
             else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}@20`) updateObState(exIndex, 'snapshot', data.d.asks, data.d.bids);
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api')) updateObState(exIndex, 'snapshot', data.d.asks, data.d.bids);
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
 
             // 3. УГОДИ (ШАРІКИ)
@@ -531,7 +510,7 @@ function connectExchange(exIndex, exName, symbol) {
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
                 deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.T === 1));
             }
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) {
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('deals.v3.api') && data.d && data.d.deals) {
                 data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
             }
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) {

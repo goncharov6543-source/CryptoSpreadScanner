@@ -35,7 +35,7 @@
         .price-ex2 { color: #2962FF; }
         #chart-container { flex: 1; width: 100%; position: relative; }
 
-        /* СПЛІТТЕР (Повзунок зміни розміру) */
+        /* СПЛІТТЕР */
         #resizer { width: 6px; background: #1e2329; cursor: col-resize; z-index: 10; transition: background 0.2s; border-left: 1px solid #2b3139; border-right: 1px solid #2b3139; flex-shrink: 0; }
         #resizer:hover, #resizer:active { background: #3498db; }
 
@@ -43,10 +43,10 @@
         #ob-container { flex: 1; display: flex; flex-direction: column; min-width: 20%; background: #0b0e11; }
         
         /* ПАНЕЛЬ НАЛАШТУВАНЬ СТАКАНА */
-        .dom-settings { display: flex; gap: 20px; padding: 8px 15px; background: #161a1e; border-bottom: 1px solid #2b3139; font-size: 0.85em; color: #848e9c; align-items: center; justify-content: center; flex-shrink: 0;}
+        .dom-settings { display: flex; flex-wrap: wrap; gap: 15px; padding: 8px 15px; background: #161a1e; border-bottom: 1px solid #2b3139; font-size: 0.85em; color: #848e9c; align-items: center; justify-content: center; flex-shrink: 0;}
         .dom-settings label { display: flex; align-items: center; gap: 8px; font-weight: bold;}
-        .dom-settings input[type=range] { width: 90px; accent-color: #f0b90b; }
-        .dom-settings select { background: #0b0e11; color: #EAECEF; border: 1px solid #3c444f; padding: 3px 6px; border-radius: 4px; font-weight: bold;}
+        .dom-settings input[type=range] { width: 90px; accent-color: #848e9c; } /* СІРИЙ ПОВЗУНОК */
+        .dom-settings select { background: #0b0e11; color: #EAECEF; border: 1px solid #3c444f; padding: 4px 8px; border-radius: 4px; font-weight: bold;}
 
         /* Самі стакани */
         #ob-wrapper { flex: 1; display: flex; min-height: 0; }
@@ -62,10 +62,12 @@
         /* Зона справа для самого стакана */
         .ob-dom { flex: 1.2; display: flex; flex-direction: column; }
         
-        /* 15 Asks, 1 Mid, 15 Bids = 31 ідеальних рядків */
         .ob-section { flex: 15; display: flex; flex-direction: column; overflow: hidden; }
         .ob-mid { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.1em; font-weight: bold; background: #161a1e; border-top: 1px solid #2b3139; border-bottom: 1px solid #2b3139; overflow: hidden;}
+        
+        /* Ідеальна висота рядка */
         .ob-row { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; position: relative; font-family: monospace; z-index: 1; overflow: hidden;}
+        .ob-row.empty { visibility: hidden; } /* Приховуємо текст пустих рядків, але тримаємо висоту */
         
         .ob-mid-ex1 { color: #00d67c; }
         .ob-mid-ex2 { color: #2962FF; }
@@ -83,19 +85,16 @@
     <div class="header">
         <div class="header-left">
             <h2 id="pair-title">Loading...</h2>
-            
             <div class="controls-group">
                 <button class="btn-tf btn-interval active" id="btn-1m" onclick="changeInterval(1, this)">1m</button>
                 <button class="btn-tf btn-interval" onclick="changeInterval(5, this)">5m</button>
                 <button class="btn-tf btn-interval" onclick="changeInterval(15, this)">15m</button>
             </div>
-
             <select class="custom-select" onchange="setColorMode(this.value)">
                 <option value="standard">Свічки: Стандарт</option>
                 <option value="solid">Свічки: Суцільні</option>
             </select>
         </div>
-        
         <div class="header-right">
             <div class="spread-badge" id="header-spread">0.00%</div>
             <div title="Статус WebSocket з'єднання">
@@ -118,11 +117,13 @@
         <div id="ob-container">
             <!-- ПАНЕЛЬ НАЛАШТУВАНЬ DOM -->
             <div class="dom-settings">
-                <label>Масштаб UI: 
-                    <input type="range" id="dom-scale" min="50" max="200" value="100" step="10" oninput="updateDomSettings()">
-                    <span id="dom-scale-val" style="width: 40px;">100%</span>
+                <label>Об'єм:
+                    <select id="dom-vol-type" onchange="updateDomSettings()">
+                        <option value="USDT">В USDT ($)</option>
+                        <option value="COIN">В Монетах</option>
+                    </select>
                 </label>
-                <label>Групування ціни: 
+                <label>Групування: 
                     <select id="dom-precision" onchange="updateDomSettings()">
                         <option value="auto">Auto</option>
                         <option value="10">10</option>
@@ -134,10 +135,13 @@
                         <option value="0.00001">0.00001</option>
                     </select>
                 </label>
+                <label>Масштаб UI: 
+                    <input type="range" id="dom-scale" min="50" max="200" value="100" step="10" oninput="updateDomSettings()">
+                    <span id="dom-scale-val" style="width: 40px;">100%</span>
+                </label>
             </div>
 
             <div id="ob-wrapper">
-                <!-- Біржа 1 -->
                 <div class="ob-col">
                     <div class="ob-header" id="ob-title-1">Exchange 1</div>
                     <div class="ob-body">
@@ -149,7 +153,6 @@
                         </div>
                     </div>
                 </div>
-                <!-- Біржа 2 -->
                 <div class="ob-col" style="border-right: none;">
                     <div class="ob-header" id="ob-title-2">Exchange 2</div>
                     <div class="ob-body">

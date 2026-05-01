@@ -152,7 +152,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    const limit = 720; // Рівно 12 годин історії для 1-хвилинного графіка
+    const limit = 720; 
 
     const bInterval = `${intervalMins}m`;
     const bybInterval = `${intervalMins}`;
@@ -221,22 +221,9 @@ function updateLiveCandle(exIndex, price) {
 }
 
 // ==========================================
-// 4. ДВИЖОК СТАКАНА ТА ПРИНТИ УГОД
+// 4. ДВИЖОК СТАКАНА
 // ==========================================
 let obState = { 1: { asks: [], bids: [] }, 2: { asks: [], bids: [] } };
-let recentTrades = { 1: {}, 2: {} }; // Зберігаємо шаріки
-
-function handleTrade(exIndex, price, qty, isBuy) {
-    const volUsdt = price * qty;
-    if (volUsdt < 10) return; // Відсікаємо спам дрібними угодами
-
-    const pStr = parseFloat(price).toString(); // Ключем є ціна
-    if (!recentTrades[exIndex][pStr]) recentTrades[exIndex][pStr] = [];
-    recentTrades[exIndex][pStr].push({ vol: volUsdt, isBuy: isBuy, time: Date.now() });
-    
-    // Перемальовуємо стакан одразу, щоб шарік з'явився миттєво
-    renderOrderBook(exIndex);
-}
 
 function normalizeObData(arr) {
     if (!arr) return [];
@@ -278,13 +265,6 @@ function renderOrderBook(exIndex) {
     const asksContainer = document.getElementById(`ob-asks-${exIndex}`);
     const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
 
-    // Видаляємо старі шаріки (старші за 1.5 сек)
-    const now = Date.now();
-    for (let p in recentTrades[exIndex]) {
-        recentTrades[exIndex][p] = recentTrades[exIndex][p].filter(t => now - t.time < 1500); 
-        if (recentTrades[exIndex][p].length === 0) delete recentTrades[exIndex][p];
-    }
-
     const asks = obState[exIndex].asks.slice(0, 15).reverse();
     const bids = obState[exIndex].bids.slice(0, 15);
 
@@ -292,49 +272,129 @@ function renderOrderBook(exIndex) {
     asks.forEach(a => { if(a.q > maxQty) maxQty = a.q; });
     bids.forEach(b => { if(b.q > maxQty) maxQty = b.q; });
 
-    const generateRow = (item, isAsk) => {
-        const width = maxQty > 0 ? (item.q / maxQty) * 100 : 0;
-        const pStr = item.p.toString();
-        let bubblesHtml = '';
-        
-        // Якщо по цій ціні щойно була угода — малюємо шаріки
-        if (recentTrades[exIndex][pStr]) {
-            bubblesHtml = '<div class="trade-bubbles">';
-            recentTrades[exIndex][pStr].forEach(t => {
-                let s = 4; // Мінімальний розмір
-                if (t.vol > 20000) s = 12;      // Кит
-                else if (t.vol > 5000) s = 9;   // Великий
-                else if (t.vol > 1000) s = 7;   // Середній
-                else if (t.vol > 100) s = 5;    // Малий
-                
-                const c = t.isBuy ? 'bubble-buy' : 'bubble-sell';
-                bubblesHtml += `<div class="bubble ${c}" style="width:${s}px; height:${s}px;"></div>`;
-            });
-            bubblesHtml += '</div>';
-        }
-
-        const bgClass = isAsk ? 'ob-bg-ask' : 'ob-bg-bid';
-        const textClass = isAsk ? 'c-ask' : 'c-bid';
-        return `<div class="ob-row"><div class="ob-bg ${bgClass}" style="width: ${width}%;"></div><span class="ob-price ${textClass}">${formatPrice(item.p)}</span>${bubblesHtml}<span class="ob-qty">${item.q.toFixed(2)}</span></div>`;
-    };
-
     let asksHtml = '';
-    asks.forEach(a => { asksHtml += generateRow(a, true); });
+    asks.forEach(a => {
+        const width = maxQty > 0 ? (a.q / maxQty) * 100 : 0;
+        asksHtml += `<div class="ob-row"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${a.q.toFixed(2)}</span></div>`;
+    });
     asksContainer.innerHTML = asksHtml;
 
     let bidsHtml = '';
-    bids.forEach(b => { bidsHtml += generateRow(b, false); });
+    bids.forEach(b => {
+        const width = maxQty > 0 ? (b.q / maxQty) * 100 : 0;
+        bidsHtml += `<div class="ob-row"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${b.q.toFixed(2)}</span></div>`;
+    });
     bidsContainer.innerHTML = bidsHtml;
 }
 
-// Примусове оновлення стаканів, щоб шаріки плавно зникали, навіть якщо ринок стоїть
-setInterval(() => {
-    renderOrderBook(1);
-    renderOrderBook(2);
-}, 500); 
+// ==========================================
+// 5. ВІДМАЛЬОВКА ШАРІКІВ (CANVAS)
+// ==========================================
+let tickHistory = { 1: [], 2: [] };
+
+function handleTrade(exIndex, price, qty, isBuy) {
+    const volUsdt = price * qty;
+    if (volUsdt < 10) return; // Фільтр спаму до 10$
+    tickHistory[exIndex].push({ p: parseFloat(price), v: volUsdt, isBuy: isBuy, t: Date.now() });
+}
+
+function drawTicksLoop() {
+    const TIME_WINDOW = 12000; // Шарік живе на екрані 12 секунд, пливучи вліво
+    const now = Date.now();
+
+    [1, 2].forEach(exIndex => {
+        const canvas = document.getElementById(`ticks-canvas-${exIndex}`);
+        if (!canvas) return;
+
+        const rect = canvas.parentElement.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) return;
+
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = rect.width * dpr;
+        canvas.height = rect.height * dpr;
+        
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        const w = rect.width;
+        const h = rect.height;
+        ctx.clearRect(0, 0, w, h);
+
+        // Очищаємо старі шаріки
+        tickHistory[exIndex] = tickHistory[exIndex].filter(tick => now - tick.t <= TIME_WINDOW);
+        if (tickHistory[exIndex].length === 0) return;
+
+        const asks = obState[exIndex].asks.slice(0, 15).reverse();
+        const bids = obState[exIndex].bids.slice(0, 15);
+        if (asks.length === 0 || bids.length === 0) return;
+
+        const maxP = asks[0].p;
+        const minP = bids[bids.length - 1].p;
+        if (maxP === minP) return;
+
+        // В нашому CSS є 31 рівний блок (15 Asks + 1 Mid + 15 Bids)
+        const rowH = h / 31; 
+
+        // Малюємо з'єднувальну лінію
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(132, 142, 156, 0.4)';
+        ctx.lineWidth = 1.5;
+        let isFirst = true;
+        
+        tickHistory[exIndex].forEach(tick => {
+            const x = w - ((now - tick.t) / TIME_WINDOW) * w;
+            let y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
+            y = Math.max(-20, Math.min(h + 20, y)); // Обмежуємо, щоб лінія не летіла в космос
+
+            if (isFirst) { ctx.moveTo(x, y); isFirst = false; }
+            else { ctx.lineTo(x, y); }
+        });
+        ctx.stroke();
+
+        // Малюємо самі шаріки і текст
+        tickHistory[exIndex].forEach(tick => {
+            const x = w - ((now - tick.t) / TIME_WINDOW) * w;
+            const y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
+            
+            if (y < -20 || y > h + 20) return; // Не малюємо шаріки за межами екрану
+
+            let r = 6; 
+            if (tick.v >= 20000) r = 20;       // Величезні
+            else if (tick.v >= 5000) r = 16;   // Великі
+            else if (tick.v >= 1000) r = 12;   // Середні
+            else if (tick.v >= 100) r = 8;     // Маленькі
+            
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, 2 * Math.PI);
+            ctx.fillStyle = tick.isBuy ? 'rgba(0, 214, 124, 0.5)' : 'rgba(231, 76, 60, 0.5)';
+            ctx.fill();
+            
+            ctx.strokeStyle = tick.isBuy ? '#00d67c' : '#e74c3c';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Якщо шарік достатньо великий (>=1000$), пишемо в ньому об'єм
+            if (r >= 12) {
+                ctx.fillStyle = '#fff';
+                ctx.font = `bold ${r - 4}px monospace`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                let txt = '';
+                if (tick.v >= 1000) txt = (tick.v/1000).toFixed(1).replace('.0','') + 'k';
+                else txt = Math.floor(tick.v).toString();
+                ctx.fillText(txt, x, y);
+            }
+        });
+    });
+
+    requestAnimationFrame(drawTicksLoop);
+}
+
+// Запускаємо анімацію стрічки угод
+requestAnimationFrame(drawTicksLoop);
+
 
 // ==========================================
-// 5. WEBSOCKETS (Графік + Стакани + Угоди)
+// 6. WEBSOCKETS (Графік + Стакани + Угоди)
 // ==========================================
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
@@ -394,7 +454,7 @@ function connectExchange(exIndex, exName, symbol) {
         try {
             const data = JSON.parse(event.data);
             
-            // --- ПАРСИНГ ТІКЕРА ---
+            // --- 1. ПАРСИНГ ТІКЕРА ---
             let price = null;
             if (exName.startsWith('Binance') && data.data && data.data.c) price = parseFloat(data.data.c); 
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('tickers') && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
@@ -406,21 +466,45 @@ function connectExchange(exIndex, exName, symbol) {
 
             if (price) updateLiveCandle(exIndex, price);
 
-            // --- ПАРСИНГ СТАКАНА ---
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
-            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []);
-            else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}`) updateObState(exIndex, 'delta', data.d.asks, data.d.bids);
-            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
+            // --- 2. ПАРСИНГ СТАКАНА ---
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) {
+                updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
+            } 
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
+                updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
+            }
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) {
+                updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
+            }
+            else if (exName === 'MEXC' && data.channel === 'push.depth') {
+                updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+            }
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}`) {
+                updateObState(exIndex, 'delta', data.d.asks, data.d.bids);
+            }
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) {
+                updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
+            }
 
-            // --- ПАРСИНГ УГОД (ШАРІКИ) ---
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m);
-            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('publicTrade') && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('trades') && data.result) data.result.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
-            else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.v), data.data.T === 1);
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
-            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
+            // --- 3. ПАРСИНГ УГОД (МАЛЮВАННЯ БУЛЬБАШОК) ---
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) {
+                handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m); 
+            }
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('publicTrade') && data.data) {
+                data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
+            }
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('trades') && data.result) {
+                data.result.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
+            }
+            else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
+                handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.v), data.data.T === 1);
+            }
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) {
+                data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
+            }
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) {
+                data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
+            }
 
         } catch (err) {}
     };
@@ -435,7 +519,7 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// 6. ЗАПУСК ТА PING
+// 7. ЗАПУСК ТА PING
 // ==========================================
 async function initLive() {
     await window.changeInterval(1, document.getElementById('btn-1m'));

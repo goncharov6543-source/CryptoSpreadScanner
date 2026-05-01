@@ -39,7 +39,7 @@ function getMinMove(price) {
 }
 
 // ==========================================
-// 2. ГРАФІК (Lightweight Charts)
+// 2. ГРАФІК (Lightweight Charts) ТА ІНТЕРФЕЙС
 // ==========================================
 const chartOptions = {
     layout: { textColor: '#d1d4dc', background: { type: 'solid', color: '#0b0e11' } },
@@ -66,11 +66,12 @@ window.addEventListener('resize', () => {
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
 });
 
+// Спліттер
 const resizer = document.getElementById('resizer');
 const chartWrapper = document.getElementById('chart-wrapper');
 let isResizing = false;
 
-resizer.addEventListener('mousedown', (e) => {
+resizer.addEventListener('mousedown', () => {
     isResizing = true;
     document.body.style.userSelect = 'none'; 
 });
@@ -221,17 +222,46 @@ function updateLiveCandle(exIndex, price) {
 }
 
 // ==========================================
-// 4. ДВИЖОК СТАКАНА
+// 4. НАЛАШТУВАННЯ СТАКАНА (Scale & Precision)
+// ==========================================
+let domConfig = { scale: 100, precision: 'auto' };
+
+try {
+    const saved = localStorage.getItem('domConfig');
+    if (saved) domConfig = JSON.parse(saved);
+    document.getElementById('dom-scale').value = domConfig.scale;
+    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
+    document.getElementById('dom-precision').value = domConfig.precision;
+} catch(e) {}
+
+window.updateDomSettings = function() {
+    domConfig.scale = parseInt(document.getElementById('dom-scale').value);
+    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
+    domConfig.precision = document.getElementById('dom-precision').value;
+    localStorage.setItem('domConfig', JSON.stringify(domConfig));
+    renderOrderBook(1); renderOrderBook(2);
+};
+
+// ==========================================
+// 5. ДВИЖОК СТАКАНА ТА АГРЕГАЦІЯ
 // ==========================================
 let obState = { 1: { asks: [], bids: [] }, 2: { asks: [], bids: [] } };
+let tickHistory = { 1: [], 2: [] }; // Стрічка угод для шаріків
+
+function handleTrade(exIndex, price, qty, isBuy) {
+    const volUsdt = price * qty;
+    if (volUsdt < 10) return; // Фільтр спаму до 10$
+    tickHistory[exIndex].push({ p: parseFloat(price), v: volUsdt, isBuy: isBuy, t: Date.now() });
+}
 
 function normalizeObData(arr) {
     if (!arr) return [];
     return arr.map(item => {
         if (Array.isArray(item)) return { p: parseFloat(item[0]), q: parseFloat(item[1]) };
-        if (item.p !== undefined && item.s !== undefined) return { p: parseFloat(item.p), q: parseFloat(item.s) }; 
-        if (item.price !== undefined && item.size !== undefined) return { p: parseFloat(item.price), q: parseFloat(item.size) };
-        return { p: 0, q: 0 };
+        // Підтримка різних форматів (Binance, Bybit, Gate, MEXC)
+        let p = item.p !== undefined ? item.p : (item.price !== undefined ? item.price : 0);
+        let q = item.q !== undefined ? item.q : (item.s !== undefined ? item.s : (item.v !== undefined ? item.v : (item.size !== undefined ? item.size : 0)));
+        return { p: parseFloat(p), q: parseFloat(q) };
     });
 }
 
@@ -261,46 +291,62 @@ function updateObState(exIndex, type, asksRaw, bidsRaw) {
     renderOrderBook(exIndex);
 }
 
+// Функція групування ліміток (Precision)
+function aggregateDOM(levels, isAsk, precisionStr) {
+    if (!precisionStr || precisionStr === 'auto') return levels;
+    const p = parseFloat(precisionStr);
+    const agg = {};
+    levels.forEach(lvl => {
+        const val = lvl.p / p;
+        let ap = isAsk ? Math.ceil(val) * p : Math.floor(val) * p;
+        ap = parseFloat(ap.toFixed(8)); // Захист від JavaScript float-багів
+        if (!agg[ap]) agg[ap] = { p: ap, q: 0 };
+        agg[ap].q += lvl.q;
+    });
+    const res = Object.values(agg);
+    res.sort((a, b) => isAsk ? a.p - b.p : b.p - a.p);
+    return res;
+}
+
 function renderOrderBook(exIndex) {
     const asksContainer = document.getElementById(`ob-asks-${exIndex}`);
     const bidsContainer = document.getElementById(`ob-bids-${exIndex}`);
+    
+    if (!asksContainer || !bidsContainer) return;
 
-    const asks = obState[exIndex].asks.slice(0, 15).reverse();
-    const bids = obState[exIndex].bids.slice(0, 15);
+    // Агрегуємо стакан
+    const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
+    const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
 
     let maxQty = 0;
     asks.forEach(a => { if(a.q > maxQty) maxQty = a.q; });
     bids.forEach(b => { if(b.q > maxQty) maxQty = b.q; });
 
+    const scaleMult = domConfig.scale / 100;
+    const fontSize = 0.85 * scaleMult;
+
     let asksHtml = '';
     asks.forEach(a => {
         const width = maxQty > 0 ? (a.q / maxQty) * 100 : 0;
-        asksHtml += `<div class="ob-row"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${a.q.toFixed(2)}</span></div>`;
+        asksHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-ask" style="width: ${width}%;"></div><span class="ob-price c-ask">${formatPrice(a.p)}</span><span class="ob-qty">${a.q.toFixed(2)}</span></div>`;
     });
     asksContainer.innerHTML = asksHtml;
 
     let bidsHtml = '';
     bids.forEach(b => {
         const width = maxQty > 0 ? (b.q / maxQty) * 100 : 0;
-        bidsHtml += `<div class="ob-row"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${b.q.toFixed(2)}</span></div>`;
+        bidsHtml += `<div class="ob-row" style="font-size: ${fontSize}em;"><div class="ob-bg ob-bg-bid" style="width: ${width}%;"></div><span class="ob-price c-bid">${formatPrice(b.p)}</span><span class="ob-qty">${b.q.toFixed(2)}</span></div>`;
     });
     bidsContainer.innerHTML = bidsHtml;
 }
 
 // ==========================================
-// 5. ВІДМАЛЬОВКА ШАРІКІВ (CANVAS)
+// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД (CANVAS)
 // ==========================================
-let tickHistory = { 1: [], 2: [] };
-
-function handleTrade(exIndex, price, qty, isBuy) {
-    const volUsdt = price * qty;
-    if (volUsdt < 10) return; // Фільтр спаму до 10$
-    tickHistory[exIndex].push({ p: parseFloat(price), v: volUsdt, isBuy: isBuy, t: Date.now() });
-}
-
 function drawTicksLoop() {
-    const TIME_WINDOW = 12000; // Шарік живе на екрані 12 секунд, пливучи вліво
+    const TIME_WINDOW = 12000; 
     const now = Date.now();
+    const scaleMult = domConfig.scale / 100;
 
     [1, 2].forEach(exIndex => {
         const canvas = document.getElementById(`ticks-canvas-${exIndex}`);
@@ -319,22 +365,20 @@ function drawTicksLoop() {
         const h = rect.height;
         ctx.clearRect(0, 0, w, h);
 
-        // Очищаємо старі шаріки
         tickHistory[exIndex] = tickHistory[exIndex].filter(tick => now - tick.t <= TIME_WINDOW);
         if (tickHistory[exIndex].length === 0) return;
 
-        const asks = obState[exIndex].asks.slice(0, 15).reverse();
-        const bids = obState[exIndex].bids.slice(0, 15);
+        // Беремо агрегований стакан для правильної висоти
+        const asks = aggregateDOM(obState[exIndex].asks, true, domConfig.precision).slice(0, 15).reverse();
+        const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
         if (asks.length === 0 || bids.length === 0) return;
 
         const maxP = asks[0].p;
         const minP = bids[bids.length - 1].p;
         if (maxP === minP) return;
 
-        // В нашому CSS є 31 рівний блок (15 Asks + 1 Mid + 15 Bids)
         const rowH = h / 31; 
 
-        // Малюємо з'єднувальну лінію
         ctx.beginPath();
         ctx.strokeStyle = 'rgba(132, 142, 156, 0.4)';
         ctx.lineWidth = 1.5;
@@ -343,25 +387,25 @@ function drawTicksLoop() {
         tickHistory[exIndex].forEach(tick => {
             const x = w - ((now - tick.t) / TIME_WINDOW) * w;
             let y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
-            y = Math.max(-20, Math.min(h + 20, y)); // Обмежуємо, щоб лінія не летіла в космос
+            y = Math.max(-20, Math.min(h + 20, y));
 
             if (isFirst) { ctx.moveTo(x, y); isFirst = false; }
             else { ctx.lineTo(x, y); }
         });
         ctx.stroke();
 
-        // Малюємо самі шаріки і текст
         tickHistory[exIndex].forEach(tick => {
             const x = w - ((now - tick.t) / TIME_WINDOW) * w;
             const y = (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - rowH);
             
-            if (y < -20 || y > h + 20) return; // Не малюємо шаріки за межами екрану
+            if (y < -20 || y > h + 20) return; 
 
-            let r = 6; 
-            if (tick.v >= 20000) r = 20;       // Величезні
-            else if (tick.v >= 5000) r = 16;   // Великі
-            else if (tick.v >= 1000) r = 12;   // Середні
-            else if (tick.v >= 100) r = 8;     // Маленькі
+            // Розмір бульбашки з урахуванням Zoom (scaleMult)
+            let r = 5 * scaleMult; 
+            if (tick.v >= 20000) r = 18 * scaleMult;
+            else if (tick.v >= 5000) r = 14 * scaleMult;
+            else if (tick.v >= 1000) r = 10 * scaleMult;
+            else if (tick.v >= 100) r = 7 * scaleMult;
             
             ctx.beginPath();
             ctx.arc(x, y, r, 0, 2 * Math.PI);
@@ -372,10 +416,10 @@ function drawTicksLoop() {
             ctx.lineWidth = 2;
             ctx.stroke();
             
-            // Якщо шарік достатньо великий (>=1000$), пишемо в ньому об'єм
-            if (r >= 12) {
+            // Текст для середніх та великих
+            if (r >= 9) {
                 ctx.fillStyle = '#fff';
-                ctx.font = `bold ${r - 4}px monospace`;
+                ctx.font = `bold ${r - 2}px monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 let txt = '';
@@ -389,12 +433,11 @@ function drawTicksLoop() {
     requestAnimationFrame(drawTicksLoop);
 }
 
-// Запускаємо анімацію стрічки угод
 requestAnimationFrame(drawTicksLoop);
 
 
 // ==========================================
-// 6. WEBSOCKETS (Графік + Стакани + Угоди)
+// 7. WEBSOCKETS (Підключення)
 // ==========================================
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
@@ -443,7 +486,7 @@ function connectExchange(exIndex, exName, symbol) {
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: cleanSym.replace('USDT', '_USDT') } }));
         } else if (exName === 'MEXC Spot') {
-            ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`, `spot@public.limit.depth.v3.api@${cleanSym}`] }));
+            ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [`spot@public.deals.v3.api@${cleanSym}`, `spot@public.limit.depth.v3.api@${cleanSym}@20`] }));
         } else if (exName.startsWith('Bitget')) {
             const instType = exName.includes('Spot') ? 'SP' : 'USDT-FUTURES';
             ws.send(JSON.stringify({ op: 'subscribe', args: [{ instType: instType, channel: 'ticker', instId: cleanSym }, { instType: instType, channel: 'books15', instId: cleanSym }, { instType: instType, channel: 'trade', instId: cleanSym }] }));
@@ -454,7 +497,7 @@ function connectExchange(exIndex, exName, symbol) {
         try {
             const data = JSON.parse(event.data);
             
-            // --- 1. ПАРСИНГ ТІКЕРА ---
+            // 1. ТІКЕРИ
             let price = null;
             if (exName.startsWith('Binance') && data.data && data.data.c) price = parseFloat(data.data.c); 
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('tickers') && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
@@ -466,27 +509,15 @@ function connectExchange(exIndex, exName, symbol) {
 
             if (price) updateLiveCandle(exIndex, price);
 
-            // --- 2. ПАРСИНГ СТАКАНА ---
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) {
-                updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
-            } 
-            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
-                updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            }
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) {
-                updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
-            }
-            else if (exName === 'MEXC' && data.channel === 'push.depth') {
-                updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
-            }
-            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}`) {
-                updateObState(exIndex, 'delta', data.d.asks, data.d.bids);
-            }
-            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) {
-                updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
-            }
+            // 2. СТАКАН
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
+            else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+            else if (exName === 'MEXC Spot' && data.c === `spot@public.limit.depth.v3.api@${cleanSym}@20`) updateObState(exIndex, 'snapshot', data.d.asks, data.d.bids);
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
 
-            // --- 3. ПАРСИНГ УГОД (МАЛЮВАННЯ БУЛЬБАШОК) ---
+            // 3. УГОДИ (ШАРІКИ)
             if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) {
                 handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m); 
             }
@@ -497,7 +528,8 @@ function connectExchange(exIndex, exName, symbol) {
                 data.result.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
             }
             else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
-                handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.v), data.data.T === 1);
+                const deals = Array.isArray(data.data) ? data.data : [data.data];
+                deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.T === 1));
             }
             else if (exName === 'MEXC Spot' && data.c === `spot@public.deals.v3.api@${cleanSym}` && data.d && data.d.deals) {
                 data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
@@ -519,7 +551,7 @@ function connectExchange(exIndex, exName, symbol) {
 }
 
 // ==========================================
-// 7. ЗАПУСК ТА PING
+// 8. ЗАПУСК ТА PING
 // ==========================================
 async function initLive() {
     await window.changeInterval(1, document.getElementById('btn-1m'));

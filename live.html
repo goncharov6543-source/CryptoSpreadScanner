@@ -24,7 +24,7 @@
         .dot-red { background-color: #e74c3c; box-shadow: 0 0 8px rgba(231, 76, 60, 0.8); }
         @keyframes blink { 0% {opacity: 1;} 50% {opacity: 0.3;} 100% {opacity: 1;} }
 
-        /* Макет 60/40 з повзунком */
+        /* Макет з повзунком */
         .main-layout { display: flex; flex: 1; height: 0; width: 100%; }
         
         /* 60% Графік */
@@ -39,12 +39,20 @@
         #resizer { width: 6px; background: #1e2329; cursor: col-resize; z-index: 10; transition: background 0.2s; border-left: 1px solid #2b3139; border-right: 1px solid #2b3139; flex-shrink: 0; }
         #resizer:hover, #resizer:active { background: #3498db; }
 
-        /* 40% Стакани + Стрічка принтів */
-        #ob-wrapper { flex: 1; height: 100%; display: flex; min-width: 20%; }
-        .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; background: #0b0e11; border-right: 1px solid #2b3139; box-sizing: border-box;}
+        /* 40% Стакани Контейнер */
+        #ob-container { flex: 1; display: flex; flex-direction: column; min-width: 20%; background: #0b0e11; }
+        
+        /* ПАНЕЛЬ НАЛАШТУВАНЬ СТАКАНА */
+        .dom-settings { display: flex; gap: 20px; padding: 8px 15px; background: #161a1e; border-bottom: 1px solid #2b3139; font-size: 0.85em; color: #848e9c; align-items: center; justify-content: center; flex-shrink: 0;}
+        .dom-settings label { display: flex; align-items: center; gap: 8px; font-weight: bold;}
+        .dom-settings input[type=range] { width: 90px; accent-color: #f0b90b; }
+        .dom-settings select { background: #0b0e11; color: #EAECEF; border: 1px solid #3c444f; padding: 3px 6px; border-radius: 4px; font-weight: bold;}
+
+        /* Самі стакани */
+        #ob-wrapper { flex: 1; display: flex; min-height: 0; }
+        .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; border-right: 1px solid #2b3139; box-sizing: border-box;}
         .ob-header { text-align: center; padding: 8px; background: #161a1e; font-weight: bold; color: #848e9c; border-bottom: 1px solid #2b3139; font-size: 0.9em; flex-shrink: 0;}
         
-        /* СИСТЕМА ДЛЯ ШАРІКІВ І СТАКАНА */
         .ob-body { display: flex; flex: 1; overflow: hidden; height: 100%; }
         
         /* Зона зліва для шаріків */
@@ -57,7 +65,7 @@
         /* 15 Asks, 1 Mid, 15 Bids = 31 ідеальних рядків */
         .ob-section { flex: 15; display: flex; flex-direction: column; overflow: hidden; }
         .ob-mid { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 1.1em; font-weight: bold; background: #161a1e; border-top: 1px solid #2b3139; border-bottom: 1px solid #2b3139; overflow: hidden;}
-        .ob-row { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; position: relative; font-size: 0.85em; font-family: monospace; z-index: 1; overflow: hidden;}
+        .ob-row { flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 0 10px; position: relative; font-family: monospace; z-index: 1; overflow: hidden;}
         
         .ob-mid-ex1 { color: #00d67c; }
         .ob-mid-ex2 { color: #2962FF; }
@@ -107,32 +115,50 @@
         
         <div id="resizer"></div>
         
-        <div id="ob-wrapper">
-            <!-- Біржа 1 -->
-            <div class="ob-col">
-                <div class="ob-header" id="ob-title-1">Exchange 1</div>
-                <div class="ob-body">
-                    <div class="ob-ticks">
-                        <canvas id="ticks-canvas-1"></canvas>
-                    </div>
-                    <div class="ob-dom">
-                        <div class="ob-section asks" id="ob-asks-1"></div>
-                        <div class="ob-mid ob-mid-ex1" id="ob-mid-1">---</div>
-                        <div class="ob-section bids" id="ob-bids-1"></div>
+        <div id="ob-container">
+            <!-- ПАНЕЛЬ НАЛАШТУВАНЬ DOM -->
+            <div class="dom-settings">
+                <label>Масштаб UI: 
+                    <input type="range" id="dom-scale" min="50" max="200" value="100" step="10" oninput="updateDomSettings()">
+                    <span id="dom-scale-val" style="width: 40px;">100%</span>
+                </label>
+                <label>Групування ціни: 
+                    <select id="dom-precision" onchange="updateDomSettings()">
+                        <option value="auto">Auto</option>
+                        <option value="10">10</option>
+                        <option value="1">1</option>
+                        <option value="0.1">0.1</option>
+                        <option value="0.01">0.01</option>
+                        <option value="0.001">0.001</option>
+                        <option value="0.0001">0.0001</option>
+                        <option value="0.00001">0.00001</option>
+                    </select>
+                </label>
+            </div>
+
+            <div id="ob-wrapper">
+                <!-- Біржа 1 -->
+                <div class="ob-col">
+                    <div class="ob-header" id="ob-title-1">Exchange 1</div>
+                    <div class="ob-body">
+                        <div class="ob-ticks"><canvas id="ticks-canvas-1"></canvas></div>
+                        <div class="ob-dom">
+                            <div class="ob-section asks" id="ob-asks-1"></div>
+                            <div class="ob-mid ob-mid-ex1" id="ob-mid-1">---</div>
+                            <div class="ob-section bids" id="ob-bids-1"></div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            <!-- Біржа 2 -->
-            <div class="ob-col" style="border-right: none;">
-                <div class="ob-header" id="ob-title-2">Exchange 2</div>
-                <div class="ob-body">
-                    <div class="ob-ticks">
-                        <canvas id="ticks-canvas-2"></canvas>
-                    </div>
-                    <div class="ob-dom">
-                        <div class="ob-section asks" id="ob-asks-2"></div>
-                        <div class="ob-mid ob-mid-ex2" id="ob-mid-2">---</div>
-                        <div class="ob-section bids" id="ob-bids-2"></div>
+                <!-- Біржа 2 -->
+                <div class="ob-col" style="border-right: none;">
+                    <div class="ob-header" id="ob-title-2">Exchange 2</div>
+                    <div class="ob-body">
+                        <div class="ob-ticks"><canvas id="ticks-canvas-2"></canvas></div>
+                        <div class="ob-dom">
+                            <div class="ob-section asks" id="ob-asks-2"></div>
+                            <div class="ob-mid ob-mid-ex2" id="ob-mid-2">---</div>
+                            <div class="ob-section bids" id="ob-bids-2"></div>
+                        </div>
                     </div>
                 </div>
             </div>

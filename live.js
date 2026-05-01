@@ -214,7 +214,7 @@ function normalizeObData(arr) {
     return arr.map(item => {
         if (Array.isArray(item)) return { p: parseFloat(item[0]), q: parseFloat(item[1]) };
         let p = item.p !== undefined ? item.p : (item.price !== undefined ? item.price : 0);
-        let q = item.q !== undefined ? item.q : (item.s !== undefined ? item.s : (item.v !== undefined ? item.v : (item.size !== undefined ? item.size : 0)));
+        let q = item.q !== undefined ? item.q : (item.s !== undefined ? item.s : (item.v !== undefined ? item.v : (item.size !== undefined ? item.size : (item.amount !== undefined ? item.amount : 0))));
         return { p: parseFloat(p), q: parseFloat(q) };
     });
 }
@@ -489,12 +489,21 @@ function connectExchange(exIndex, exName, symbol) {
             if (price) updateLiveCandle(exIndex, price);
 
             // 2. СТАКАН
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
-            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result) updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
-            else if (exName === 'MEXC' && data.channel === 'push.depth') updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
-            else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api')) updateObState(exIndex, 'snapshot', data.d.asks, data.d.bids);
-            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) {
+                updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
+            } else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
+                updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
+            } else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') {
+                updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
+            } else if (exName === 'MEXC' && data.channel === 'push.depth') {
+                updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+            } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) {
+                updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
+            } else if (exName === 'MEXC Spot' && data.c && data.c.includes('increase.depth.v3.api') && data.d) {
+                updateObState(exIndex, 'delta', data.d.asks || [], data.d.bids || []);
+            } else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) {
+                updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
+            }
 
             // 3. УГОДИ (ШАРІКИ)
             if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) {
@@ -504,7 +513,8 @@ function connectExchange(exIndex, exName, symbol) {
                 data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
             }
             else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('trades') && data.result) {
-                data.result.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
+                const tradesData = Array.isArray(data.result) ? data.result : [data.result];
+                tradesData.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
             }
             else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
@@ -546,7 +556,8 @@ setInterval(() => {
         if (exName.startsWith('Bybit')) ws.send(JSON.stringify({ op: 'ping' }));
         else if (exName === 'Gate.io') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'futures.ping' }));
         else if (exName === 'Gate.io Spot') ws.send(JSON.stringify({ time: Math.floor(Date.now()/1000), channel: 'spot.ping' }));
-        else if (exName.startsWith('MEXC')) ws.send(JSON.stringify({ method: 'ping' }));
+        else if (exName === 'MEXC') ws.send(JSON.stringify({ method: 'ping' }));
+        else if (exName === 'MEXC Spot') ws.send(JSON.stringify({ method: 'PING' }));
         else if (exName.startsWith('Bitget')) ws.send('ping');
     };
     sendPing(ws1, rawEx1Name);

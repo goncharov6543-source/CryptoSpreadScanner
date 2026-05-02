@@ -410,6 +410,26 @@ requestAnimationFrame(drawTicksLoop);
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
 
+// Змінні для множника контрактів ф'ючерсів MEXC
+let mexcFutMultiplier1 = 1;
+let mexcFutMultiplier2 = 1;
+
+async function fetchMexcMultiplier(exIndex, exName, symbol) {
+    if (exName !== 'MEXC') return; // Виконуємо тільки для ф'ючерсів MEXC
+    try {
+        const s = symbol.replace('_', '').toUpperCase().replace('USDT', '_USDT');
+        const r = await axios.get(`https://contract.mexc.com/api/v1/contract/detail?symbol=${s}`);
+        if (r.data && r.data.data && r.data.data.contractSize) {
+            const size = parseFloat(r.data.data.contractSize);
+            if (exIndex === 1) mexcFutMultiplier1 = size;
+            else mexcFutMultiplier2 = size;
+            console.log(`[MEXC Fut] Множник для ${s}: ${size}`);
+        }
+    } catch(e) {
+        console.error("[MEXC Fut] Помилка завантаження множника:", e);
+    }
+}
+
 function updateStatusDot() {
     const dot = document.getElementById('ws-status-dot');
     dot.className = (ws1Active && ws2Active) ? 'status-dot dot-green' : 'status-dot dot-red';
@@ -495,12 +515,12 @@ function connectExchange(exIndex, exName, symbol) {
             }
 
             // ==========================================
-            // ФОЛЛБЕК ДЛЯ ЗАБЛОКОВАНИХ МОНЕТ MEXC (REST API POLLING)
+            // ФОЛЛБЕК ДЛЯ ЗАБЛОКОВАНИХ МОНЕТ MEXC SPOT
             // ==========================================
             if (exName === 'MEXC Spot' && data.msg && typeof data.msg === 'string' && data.msg.includes('Blocked')) {
                 if (!window[`mexc_rest_fallback_${exIndex}`]) {
                     window[`mexc_rest_fallback_${exIndex}`] = true;
-                    console.warn(`🚨 [MEXC WS БЛОКУВАННЯ] MEXC відхилив WebSocket підписку для ${subSym}. Переходимо на надійний REST API (Polling кожні 1.5с)...`);
+                    console.warn(`🚨 [MEXC WS БЛОКУВАННЯ] MEXC відхилив WebSocket підписку для ${subSym}. Переходимо на надійний REST API...`);
                     
                     const midContainer = document.getElementById(`ob-mid-${exIndex}`);
                     if (midContainer) midContainer.style.color = '#f1c40f'; 
@@ -591,7 +611,10 @@ function connectExchange(exIndex, exName, symbol) {
             } else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') {
                 updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
             } else if (exName === 'MEXC' && data.channel === 'push.depth') {
-                updateObState(exIndex, 'delta', data.data.asks, data.data.bids);
+                // ВИПРАВЛЕНО: Використовуємо snapshot замість delta та множимо контракти на їх розмір
+                const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
+                const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
+                updateObState(exIndex, 'snapshot', adjust(data.data.asks), adjust(data.data.bids));
             } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) {
                 updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
             } else if (exName === 'MEXC Spot' && data.c && data.c.includes('increase.depth.v3.api') && data.d) {
@@ -612,8 +635,10 @@ function connectExchange(exIndex, exName, symbol) {
                 tradesData.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
             }
             else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
+                // ВИПРАВЛЕНО: Множимо об'єм у контрактах на розмір контракту
+                const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
-                deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.T === 1));
+                deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v) * mult, t.T === 1));
             }
             else if (exName === 'MEXC Spot' && data.c && data.c.includes('deals.v3.api') && data.d && data.d.deals) {
                 data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
@@ -644,6 +669,10 @@ function connectExchange(exIndex, exName, symbol) {
 // 8. ЗАПУСК ТА PING
 // ==========================================
 async function initLive() {
+    // Спочатку завантажуємо правильні множники контрактів для MEXC
+    await fetchMexcMultiplier(1, rawEx1Name, symbol);
+    await fetchMexcMultiplier(2, rawEx2Name, symbol);
+    
     await window.changeInterval(1, document.getElementById('btn-1m'));
     ws1 = connectExchange(1, rawEx1Name, symbol);
     ws2 = connectExchange(2, rawEx2Name, symbol);

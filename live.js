@@ -47,13 +47,13 @@ const series1 = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef
 const series2 = chart.addCandlestickSeries({ upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat, priceScaleId: 'left' });
 
 // ==========================================
-// НОВИЙ ГРАФІК СПРЕДУ (12 Годин)
+// НОВИЙ ГРАФІК СПРЕДУ
 // ==========================================
 const spreadChartContainer = document.getElementById('spread-chart-container');
 const spreadChartOptions = {
     layout: { textColor: '#848e9c', background: { type: 'solid', color: '#0b0e11' } },
     grid: { 
-        vertLines: { color: '#1e2329', style: 2 }, // 2 = Dashed
+        vertLines: { color: '#1e2329', style: 2 }, 
         horzLines: { color: '#1e2329', style: 2 } 
     },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
@@ -62,14 +62,34 @@ const spreadChartOptions = {
 };
 const spreadChart = LightweightCharts.createChart(spreadChartContainer, spreadChartOptions);
 const spreadSeries = spreadChart.addAreaSeries({
-    lineColor: '#8e44ad', // Фіолетовий дизайн
+    lineColor: '#8e44ad', 
     topColor: 'rgba(142, 68, 173, 0.35)',
     bottomColor: 'rgba(142, 68, 173, 0.0)',
     lineWidth: 2,
     priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
 });
 
-// Адаптація розмірів для обох графіків
+// СИНХРОНІЗАЦІЯ ЧАСУ ДВОХ ГРАФІКІВ
+let isSyncingLeft = false;
+let isSyncingRight = false;
+
+chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (!isSyncingLeft && range) {
+        isSyncingRight = true;
+        spreadChart.timeScale().setVisibleLogicalRange(range);
+        isSyncingRight = false;
+    }
+});
+
+spreadChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+    if (!isSyncingRight && range) {
+        isSyncingLeft = true;
+        chart.timeScale().setVisibleLogicalRange(range);
+        isSyncingLeft = false;
+    }
+});
+
+// Адаптація розмірів
 window.addEventListener('resize', () => { 
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
     spreadChart.resize(spreadChartContainer.clientWidth, spreadChartContainer.clientHeight);
@@ -109,7 +129,6 @@ function updateLiveSpread() {
         let sp = (((currentP2 - currentP1) / currentP1) * 100);
         document.getElementById('header-spread').innerText = sp.toFixed(2) + '%';
         
-        // Оновлюємо також фіолетовий графік спреду в реальному часі (зрізаємо час до хвилини)
         const currentCandleTime = Math.floor(Date.now() / 60000) * 60;
         try { spreadSeries.update({ time: currentCandleTime, value: sp }); } catch(e) {}
     }
@@ -161,6 +180,22 @@ window.changeInterval = async function(mins, btnElement) {
 
     if (hist1.length > 0) { series1.setData(hist1); lastCandle1 = hist1[hist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
     if (hist2.length > 0) { series2.setData(hist2); lastCandle2 = hist2[hist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
+    
+    // АВТО-МАСШТАБ СИНЬОГО ГРАФІКА (Виправлення "зависання" при скролі)
+    if (currentP1 && currentP2) {
+        const ratio = Math.max(currentP1 / currentP2, currentP2 / currentP1);
+        if (ratio < 3) {
+            // Якщо ціни близькі (напр. SKYA), прив'язуємо до однієї шкали, щоб скролились синхронно
+            series2.applyOptions({ priceScaleId: 'right' });
+            chart.priceScale('left').applyOptions({ visible: false });
+        } else {
+            // Якщо ціни відрізняються в 1000 разів, розносимо на різні шкали
+            series2.applyOptions({ priceScaleId: 'left' });
+            chart.priceScale('left').applyOptions({ visible: true });
+        }
+    }
+
+    chart.timeScale().fitContent();
     updateLiveSpread();
 };
 
@@ -200,15 +235,100 @@ async function fetchHistory(exName, symbol, intervalMins) {
     } catch(e) { return []; }
 }
 
-async function loadAndRenderSpreadChart() {
+// ЧАНКОВИЙ ЗАВАНТАЖУВАЧ (Для обходу банів при завантаженні 3D та 7D)
+async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
+    const cleanSym = symbol.replace('_', '').toUpperCase();
+    const isSpot = exName.endsWith(' Spot');
+    const ex = exName.replace(' Spot', '');
+    
+    let reqSym = cleanSym;
+    if (isSpot && reqSym.startsWith('1000') && !reqSym.includes('SATS')) {
+        reqSym = reqSym.replace(/^10000?/, '');
+    }
+
+    let allData = [];
+    let currentEndTime = Date.now();
+    
+    while (allData.length < totalCandles) {
+        let url = '';
+        let toSec = Math.floor(currentEndTime / 1000);
+        let toMs = currentEndTime;
+        let limit = Math.min(1000, totalCandles - allData.length);
+
+        try {
+            if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}`;
+            else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${reqSym}&interval=1&limit=${limit}&end=${toMs}`;
+            else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${reqSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${reqSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}`;
+            else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${reqSym}&granularity=1min&limit=${limit}&endTime=${toMs}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${reqSym}&productType=USDT-FUTURES&granularity=1m&limit=${limit}&endTime=${toMs}`;
+            else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}` : `https://contract.mexc.com/api/v1/contract/kline/${reqSym.replace('USDT','_USDT')}?interval=Min1&end=${toSec}`;
+
+            const r = await axios.get(url, { timeout: 7000 });
+            let chunk = [];
+            
+            if (ex === 'Binance') chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
+            else if (ex === 'Bybit') chunk = r.data.result.list.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })).reverse();
+            else if (ex === 'Gate.io') { if (isSpot) chunk = r.data.map(k => ({ time: parseInt(k[0]), close: parseFloat(k[2]) })); else chunk = r.data.map(k => ({ time: parseInt(k.t), close: parseFloat(k.c) })); }
+            else if (ex === 'Bitget') chunk = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
+            else if (ex === 'MEXC') { if (isSpot) chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })); else if (r.data.data && r.data.data.time) { const d = r.data.data; for(let i=0; i<d.time.length; i++) chunk.push({ time: parseInt(d.time[i]), close: parseFloat(d.close[i]) }); chunk = chunk.slice(-limit); } }
+
+            if (!chunk || chunk.length === 0) break;
+            
+            chunk.sort((a,b) => a.time - b.time); 
+            allData = chunk.concat(allData);
+            currentEndTime = (chunk[0].time * 1000) - 1; 
+            
+            if (onProgress) onProgress(chunk.length);
+            if (chunk.length < limit * 0.5) break; 
+            if (allData.length >= totalCandles) break;
+            
+            await new Promise(res => setTimeout(res, 250));
+            
+        } catch(e) {
+            console.error(`Chunk fetch error ${exName}:`, e.message);
+            break;
+        }
+    }
+    
+    const uniqueData = []; let lastTime = 0;
+    allData.sort((a,b) => a.time - b.time);
+    for (let d of allData) { 
+        if (d.time > lastTime && !isNaN(d.time) && !isNaN(d.close)) { 
+            uniqueData.push(d); lastTime = d.time; 
+        } 
+    }
+    return uniqueData.slice(-totalCandles);
+}
+
+// ЗАВАНТАЖЕННЯ ІСТОРІЇ СПРЕДУ
+window.loadSpreadHistory = async function(days, btnElement) {
+    if (btnElement) {
+        document.querySelectorAll('.btn-spread-time').forEach(b => b.classList.remove('active'));
+        btnElement.classList.add('active');
+    }
+    
+    const totalCandles = Math.floor(days * 24 * 60);
+    const progContainer = document.getElementById('spread-progress-container');
+    const progBar = document.getElementById('spread-progress-fill');
+    const progText = document.getElementById('spread-progress-text');
+    
+    if (progContainer) progContainer.style.display = 'flex';
+    if (progBar) progBar.style.width = '0%';
+    if (progText) progText.innerText = '0%';
+    
+    let loaded1 = 0; let loaded2 = 0;
+    const updateProgress = () => {
+        let pct = Math.floor(((loaded1 + loaded2) / (totalCandles * 2)) * 100);
+        if (pct > 100) pct = 100;
+        if (progBar) progBar.style.width = pct + '%';
+        if (progText) progText.innerText = pct + '%';
+    };
+
     try {
-        // Завжди беремо 1 хвилину, щоб покрити 12 годин (720 свічок)
         const [hist1, hist2] = await Promise.all([
-            fetchHistory(rawEx1Name, symbol, 1),
-            fetchHistory(rawEx2Name, symbol, 1)
+            getKlineDataChunked(rawEx1Name, symbol, totalCandles, c => { loaded1 += c; updateProgress(); }),
+            getKlineDataChunked(rawEx2Name, symbol, totalCandles, c => { loaded2 += c; updateProgress(); })
         ]);
 
-        // ПРАВИЛЬНЕ ЗЛИВАННЯ ПО ТОЧНОМУ ЧАСУ (уникаємо фейкових спайків)
         let map1 = new Map();
         hist1.forEach(k => map1.set(k.time, k.close));
 
@@ -219,18 +339,25 @@ async function loadAndRenderSpreadChart() {
                 let c2 = k.close;
                 if (c1 > 0) {
                     let sp = ((c2 - c1) / c1) * 100;
-                    spreadData.push({ time: k.time, value: sp });
+                    spreadData.push({ time: k.time, value: sp }); 
                 }
             }
         });
 
         spreadData.sort((a, b) => a.time - b.time);
         spreadSeries.setData(spreadData);
+        
         spreadChart.timeScale().fitContent();
+        chart.timeScale().fitContent();
+        
     } catch(e) {
         console.error("Помилка завантаження історії спреду:", e);
+    } finally {
+        setTimeout(() => {
+            if (progContainer) progContainer.style.display = 'none';
+        }, 1000);
     }
-}
+};
 
 function updateLiveCandle(exIndex, price) {
     const intervalMs = currentIntervalMins * 60 * 1000;
@@ -497,11 +624,9 @@ async function fetchMexcMultiplier(exIndex, exName, symbol, retries = 3) {
                 const size = parseFloat(r.data.data.contractSize);
                 if (exIndex === 1) mexcFutMultiplier1 = size;
                 else mexcFutMultiplier2 = size;
-                console.log(`✅ [MEXC Fut] Успішно отримано множник для ${s}: ${size}`);
                 return;
             }
         } catch(e) {
-            console.warn(`[MEXC Fut] Спроба ${i+1} отримати множник для ${s} не вдалась. Повтор...`);
             await new Promise(res => setTimeout(res, 500));
         }
     }
@@ -564,7 +689,7 @@ function connectExchange(exIndex, exName, symbol) {
                         const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
                         updateObState(exIndex, 'snapshot', adjust(res.data.data.asks), adjust(res.data.data.bids));
                     }
-                }).catch(e => console.error("Помилка завантаження початкового стакану MEXC Futures", e));
+                }).catch(e => {});
                 
         } else if (exName === 'MEXC Spot') {
             const spotSubs = [
@@ -693,8 +818,8 @@ async function initLive() {
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
     
-    // ЗАВАНТАЖЕННЯ І ВІДМАЛЬОВКА ГРАФІКА СПРЕДУ
-    loadAndRenderSpreadChart();
+    // Завантажуємо стартовий графік спреду
+    window.loadSpreadHistory(0.5, document.querySelector('.btn-spread-time.active'));
     
     ws1 = connectExchange(1, rawEx1Name, symbol);
     ws2 = connectExchange(2, rawEx2Name, symbol);

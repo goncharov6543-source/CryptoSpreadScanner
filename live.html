@@ -50,7 +50,7 @@
 
         /* Самі стакани */
         #ob-wrapper { flex: 1; display: flex; min-height: 0; }
-        .ob-col { width: 40%; height: 100%; display: flex; flex-direction: column; border-right: 1px solid #2b3139; box-sizing: border-box;}
+        .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; border-right: 1px solid #2b3139; box-sizing: border-box;}
         .ob-header { text-align: center; padding: 8px; background: #161a1e; font-weight: bold; color: #848e9c; border-bottom: 1px solid #2b3139; font-size: 0.9em; flex-shrink: 0;}
         
         .ob-body { display: flex; flex: 1; overflow: hidden; height: 100%; }
@@ -112,8 +112,21 @@
             <div id="chart-container" style="flex: 2;"></div>
             
             <!-- НОВИЙ ГРАФІК СПРЕДУ -->
-            <div style="flex: 1; border-top: 1px solid #2b3139; position: relative; display: flex; flex-direction: column;">
-                <div style="position: absolute; top: 10px; left: 20px; z-index: 10; color: #848e9c; font-weight: bold; font-size: 0.85em; pointer-events: none;">Історія спреду (12H / 1m)</div>
+            <div style="flex: 1; border-top: 1px solid #2b3139; position: relative; display: flex; flex-direction: column; width: 100%;">
+                <div style="position: absolute; top: 10px; left: 20px; z-index: 10; display: flex; align-items: center; gap: 10px;">
+                    <div style="color: #848e9c; font-weight: bold; font-size: 0.85em; pointer-events: none; margin-right: 5px;">Історія спреду (1m):</div>
+                    <button class="btn-tf btn-spread-time active" onclick="loadSpreadHistory(0.5, this)">12H</button>
+                    <button class="btn-tf btn-spread-time" onclick="loadSpreadHistory(3, this)">3D</button>
+                    <button class="btn-tf btn-spread-time" onclick="loadSpreadHistory(7, this)">7D</button>
+                    
+                    <!-- ПРОГРЕС БАР -->
+                    <div id="spread-progress-container" style="display: none; align-items: center; gap: 5px; margin-left: 10px;">
+                        <span id="spread-progress-text" style="color: #00d67c; font-size: 0.8em; font-weight: bold;">0%</span>
+                        <div style="width: 80px; height: 6px; background: #1e2329; border-radius: 3px; overflow: hidden; border: 1px solid #3c444f;">
+                            <div id="spread-progress-fill" style="width: 0%; height: 100%; background: #00d67c; transition: width 0.2s;"></div>
+                        </div>
+                    </div>
+                </div>
                 <div id="spread-chart-container" style="flex: 1; width: 100%;"></div>
             </div>
         </div>

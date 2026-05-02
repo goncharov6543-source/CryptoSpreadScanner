@@ -1,12 +1,15 @@
 const axios = require('axios');
 
 // ==========================================
-// 1. БАЗОВІ НАЛАШТУВАННЯ
+// 1. БАЗОВІ НАЛАШТУВАННЯ ТА ЧАС
 // ==========================================
 const urlParams = new URLSearchParams(window.location.search);
 const symbol = urlParams.get('symbol');
 const rawEx1Name = urlParams.get('ex1');
 const rawEx2Name = urlParams.get('ex2');
+
+// Отримуємо зміщення локального часу комп'ютера у секундах
+const tzOffset = new Date().getTimezoneOffset() * -60;
 
 function formatExName(name) {
     return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
@@ -69,26 +72,6 @@ const spreadSeries = spreadChart.addAreaSeries({
     priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
 });
 
-// СИНХРОНІЗАЦІЯ ЧАСУ ДВОХ ГРАФІКІВ
-let isSyncingLeft = false;
-let isSyncingRight = false;
-
-chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (!isSyncingLeft && range) {
-        isSyncingRight = true;
-        spreadChart.timeScale().setVisibleLogicalRange(range);
-        isSyncingRight = false;
-    }
-});
-
-spreadChart.timeScale().subscribeVisibleLogicalRangeChange(range => {
-    if (!isSyncingRight && range) {
-        isSyncingLeft = true;
-        chart.timeScale().setVisibleLogicalRange(range);
-        isSyncingLeft = false;
-    }
-});
-
 // Адаптація розмірів
 window.addEventListener('resize', () => { 
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
@@ -129,7 +112,8 @@ function updateLiveSpread() {
         let sp = (((currentP2 - currentP1) / currentP1) * 100);
         document.getElementById('header-spread').innerText = sp.toFixed(2) + '%';
         
-        const currentCandleTime = Math.floor(Date.now() / 60000) * 60;
+        // Додаємо tzOffset для локального часу на графіку спреду
+        const currentCandleTime = Math.floor(Date.now() / 60000) * 60 + tzOffset;
         try { spreadSeries.update({ time: currentCandleTime, value: sp }); } catch(e) {}
     }
 }
@@ -178,18 +162,20 @@ window.changeInterval = async function(mins, btnElement) {
     series1.applyOptions({ priceFormat: formatParams });
     series2.applyOptions({ priceFormat: formatParams });
 
-    if (hist1.length > 0) { series1.setData(hist1); lastCandle1 = hist1[hist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
-    if (hist2.length > 0) { series2.setData(hist2); lastCandle2 = hist2[hist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
+    // Застосовуємо зміщення часу (tzOffset) до всіх свічок перед відмальовкою
+    const adjHist1 = hist1.map(k => ({ ...k, time: k.time + tzOffset }));
+    const adjHist2 = hist2.map(k => ({ ...k, time: k.time + tzOffset }));
+
+    if (adjHist1.length > 0) { series1.setData(adjHist1); lastCandle1 = adjHist1[adjHist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
+    if (adjHist2.length > 0) { series2.setData(adjHist2); lastCandle2 = adjHist2[adjHist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
     
-    // АВТО-МАСШТАБ СИНЬОГО ГРАФІКА (Виправлення "зависання" при скролі)
+    // АВТО-МАСШТАБ СИНЬОГО ГРАФІКА
     if (currentP1 && currentP2) {
         const ratio = Math.max(currentP1 / currentP2, currentP2 / currentP1);
         if (ratio < 3) {
-            // Якщо ціни близькі (напр. SKYA), прив'язуємо до однієї шкали, щоб скролились синхронно
             series2.applyOptions({ priceScaleId: 'right' });
             chart.priceScale('left').applyOptions({ visible: false });
         } else {
-            // Якщо ціни відрізняються в 1000 разів, розносимо на різні шкали
             series2.applyOptions({ priceScaleId: 'left' });
             chart.priceScale('left').applyOptions({ visible: true });
         }
@@ -281,7 +267,7 @@ async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
             if (chunk.length < limit * 0.5) break; 
             if (allData.length >= totalCandles) break;
             
-            await new Promise(res => setTimeout(res, 250));
+            await new Promise(res => setTimeout(res, 250)); // Пауза між чанками
             
         } catch(e) {
             console.error(`Chunk fetch error ${exName}:`, e.message);
@@ -330,7 +316,7 @@ window.loadSpreadHistory = async function(days, btnElement) {
         ]);
 
         let map1 = new Map();
-        hist1.forEach(k => map1.set(k.time, k.close));
+        hist1.forEach(k => map1.set(k.time, k.close)); // Зберігаємо як UTC
 
         let spreadData = [];
         hist2.forEach(k => {
@@ -339,7 +325,8 @@ window.loadSpreadHistory = async function(days, btnElement) {
                 let c2 = k.close;
                 if (c1 > 0) {
                     let sp = ((c2 - c1) / c1) * 100;
-                    spreadData.push({ time: k.time, value: sp }); 
+                    // Додаємо зміщення часу (tzOffset) при пуші в масив для графіку
+                    spreadData.push({ time: k.time + tzOffset, value: sp }); 
                 }
             }
         });
@@ -347,8 +334,8 @@ window.loadSpreadHistory = async function(days, btnElement) {
         spreadData.sort((a, b) => a.time - b.time);
         spreadSeries.setData(spreadData);
         
+        // Розтягуємо на всю ширину тільки графік спреду
         spreadChart.timeScale().fitContent();
-        chart.timeScale().fitContent();
         
     } catch(e) {
         console.error("Помилка завантаження історії спреду:", e);
@@ -361,7 +348,8 @@ window.loadSpreadHistory = async function(days, btnElement) {
 
 function updateLiveCandle(exIndex, price) {
     const intervalMs = currentIntervalMins * 60 * 1000;
-    const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000);
+    // Додаємо зміщення часу до поточного
+    const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000) + tzOffset;
 
     let lastCandle = exIndex === 1 ? lastCandle1 : lastCandle2;
     let series = exIndex === 1 ? series1 : series2;

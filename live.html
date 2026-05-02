@@ -28,7 +28,7 @@
         .main-layout { display: flex; flex: 1; height: 0; width: 100%; }
         
         /* 60% Графік */
-        #chart-wrapper { width: 50%; height: 100%; display: flex; flex-direction: column; min-width: 20%; }
+        #chart-wrapper { width: 60%; height: 100%; display: flex; flex-direction: column; min-width: 20%; }
         .prices-overlay { display: flex; gap: 30px; padding: 10px 20px; font-size: 1.2em; font-weight: bold; background: #0b0e11; border-bottom: 1px solid #2b3139; flex-shrink: 0;}
         .price-box { display: flex; align-items: center; gap: 8px; }
         .price-ex1 { color: #00d67c; } 
@@ -50,7 +50,7 @@
 
         /* Самі стакани */
         #ob-wrapper { flex: 1; display: flex; min-height: 0; }
-        .ob-col { width: 50%; height: 100%; display: flex; flex-direction: column; border-right: 1px solid #2b3139; box-sizing: border-box;}
+        .ob-col { width: 40%; height: 100%; display: flex; flex-direction: column; border-right: 1px solid #2b3139; box-sizing: border-box;}
         .ob-header { text-align: center; padding: 8px; background: #161a1e; font-weight: bold; color: #848e9c; border-bottom: 1px solid #2b3139; font-size: 0.9em; flex-shrink: 0;}
         
         .ob-body { display: flex; flex: 1; overflow: hidden; height: 100%; }
@@ -109,7 +109,13 @@
                 <div class="price-box"><span id="name-ex1" style="font-size:0.8em; color:#848e9c;">Ex1</span> <span class="price-ex1" id="price-ex1">---</span></div>
                 <div class="price-box"><span id="name-ex2" style="font-size:0.8em; color:#848e9c;">Ex2</span> <span class="price-ex2" id="price-ex2">---</span></div>
             </div>
-            <div id="chart-container"></div>
+            <div id="chart-container" style="flex: 2;"></div>
+            
+            <!-- НОВИЙ ГРАФІК СПРЕДУ -->
+            <div style="flex: 1; border-top: 1px solid #2b3139; position: relative; display: flex; flex-direction: column;">
+                <div style="position: absolute; top: 10px; left: 20px; z-index: 10; color: #848e9c; font-weight: bold; font-size: 0.85em; pointer-events: none;">Історія спреду (12H / 1m)</div>
+                <div id="spread-chart-container" style="flex: 1; width: 100%;"></div>
+            </div>
         </div>
         
         <div id="resizer"></div>

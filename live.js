@@ -37,15 +37,43 @@ const chartOptions = {
     grid: { vertLines: { color: '#2b3139', style: 1 }, horzLines: { color: '#2b3139', style: 1 } },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
     rightPriceScale: { borderColor: '#2b3139', autoScale: true },
+    leftPriceScale: { visible: true, borderColor: '#2b3139', autoScale: true }, 
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
 };
 
 const chartContainer = document.getElementById('chart-container');
 const chart = LightweightCharts.createChart(chartContainer, chartOptions);
 const series1 = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', title: ex1NameFormat });
-const series2 = chart.addCandlestickSeries({ upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat });
+const series2 = chart.addCandlestickSeries({ upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat, priceScaleId: 'left' });
 
-window.addEventListener('resize', () => { chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); });
+// ==========================================
+// НОВИЙ ГРАФІК СПРЕДУ (12 Годин)
+// ==========================================
+const spreadChartContainer = document.getElementById('spread-chart-container');
+const spreadChartOptions = {
+    layout: { textColor: '#848e9c', background: { type: 'solid', color: '#0b0e11' } },
+    grid: { 
+        vertLines: { color: '#1e2329', style: 2 }, // 2 = Dashed
+        horzLines: { color: '#1e2329', style: 2 } 
+    },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
+    rightPriceScale: { borderColor: '#2b3139', autoScale: true },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
+};
+const spreadChart = LightweightCharts.createChart(spreadChartContainer, spreadChartOptions);
+const spreadSeries = spreadChart.addAreaSeries({
+    lineColor: '#8e44ad', // Фіолетовий дизайн
+    topColor: 'rgba(142, 68, 173, 0.35)',
+    bottomColor: 'rgba(142, 68, 173, 0.0)',
+    lineWidth: 2,
+    priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
+});
+
+// Адаптація розмірів для обох графіків
+window.addEventListener('resize', () => { 
+    chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
+    spreadChart.resize(spreadChartContainer.clientWidth, spreadChartContainer.clientHeight);
+});
 
 const resizer = document.getElementById('resizer');
 const chartWrapper = document.getElementById('chart-wrapper');
@@ -58,6 +86,7 @@ document.addEventListener('mousemove', (e) => {
     if (newWidthPct < 20) newWidthPct = 20; if (newWidthPct > 80) newWidthPct = 80;
     chartWrapper.style.width = newWidthPct + '%';
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight);
+    spreadChart.resize(spreadChartContainer.clientWidth, spreadChartContainer.clientHeight);
 });
 document.addEventListener('mouseup', () => { isResizing = false; document.body.style.userSelect = 'auto'; });
 
@@ -77,7 +106,12 @@ let currentP1 = null, currentP2 = null;
 
 function updateLiveSpread() {
     if (currentP1 && currentP2 && currentP1 > 0) {
-        document.getElementById('header-spread').innerText = (((currentP2 - currentP1) / currentP1) * 100).toFixed(2) + '%';
+        let sp = (((currentP2 - currentP1) / currentP1) * 100);
+        document.getElementById('header-spread').innerText = sp.toFixed(2) + '%';
+        
+        // Оновлюємо також фіолетовий графік спреду в реальному часі (зрізаємо час до хвилини)
+        const currentCandleTime = Math.floor(Date.now() / 60000) * 60;
+        try { spreadSeries.update({ time: currentCandleTime, value: sp }); } catch(e) {}
     }
 }
 
@@ -137,13 +171,18 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const limit = 720; 
     const bInterval = `${intervalMins}m`; const bybInterval = `${intervalMins}`; const bitgetSpotInt = `${intervalMins}min`; const mexcFutInt = `Min${intervalMins}`;
 
+    let reqSym = cleanSym;
+    if (isSpot && reqSym.startsWith('1000') && !reqSym.includes('SATS')) {
+        reqSym = reqSym.replace(/^10000?/, '');
+    }
+
     try {
         let url = '';
-        if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${cleanSym}&interval=${bInterval}&limit=${limit}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${cleanSym}&interval=${bInterval}&limit=${limit}`;
-        else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${cleanSym}&interval=${bybInterval}&limit=${limit}`;
-        else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${cleanSym.replace('USDT','_USDT')}&interval=${bInterval}&limit=${limit}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${cleanSym.replace('USDT','_USDT')}&interval=${bInterval}&limit=${limit}`;
-        else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${cleanSym}&granularity=${bitgetSpotInt}&limit=${limit}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${cleanSym}&productType=USDT-FUTURES&granularity=${bInterval}&limit=${limit}`;
-        else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${cleanSym}&interval=${bInterval}&limit=${limit}` : `https://contract.mexc.com/api/v1/contract/kline/${cleanSym.replace('USDT','_USDT')}?interval=${mexcFutInt}`;
+        if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${reqSym}&interval=${bInterval}&limit=${limit}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${reqSym}&interval=${bInterval}&limit=${limit}`;
+        else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${reqSym}&interval=${bybInterval}&limit=${limit}`;
+        else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${reqSym.replace('USDT','_USDT')}&interval=${bInterval}&limit=${limit}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${reqSym.replace('USDT','_USDT')}&interval=${bInterval}&limit=${limit}`;
+        else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${reqSym}&granularity=${bitgetSpotInt}&limit=${limit}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${reqSym}&productType=USDT-FUTURES&granularity=${bInterval}&limit=${limit}`;
+        else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${reqSym}&interval=${bInterval}&limit=${limit}` : `https://contract.mexc.com/api/v1/contract/kline/${reqSym.replace('USDT','_USDT')}?interval=${mexcFutInt}`;
 
         if (!url) return [];
         const r = await axios.get(url, { timeout: 5000 });
@@ -159,6 +198,38 @@ async function fetchHistory(exName, symbol, intervalMins) {
         for (let d of data) { if (d.time > lastTime && !isNaN(d.time) && !isNaN(d.close)) { uniqueData.push(d); lastTime = d.time; } }
         return uniqueData;
     } catch(e) { return []; }
+}
+
+async function loadAndRenderSpreadChart() {
+    try {
+        // Завжди беремо 1 хвилину, щоб покрити 12 годин (720 свічок)
+        const [hist1, hist2] = await Promise.all([
+            fetchHistory(rawEx1Name, symbol, 1),
+            fetchHistory(rawEx2Name, symbol, 1)
+        ]);
+
+        // ПРАВИЛЬНЕ ЗЛИВАННЯ ПО ТОЧНОМУ ЧАСУ (уникаємо фейкових спайків)
+        let map1 = new Map();
+        hist1.forEach(k => map1.set(k.time, k.close));
+
+        let spreadData = [];
+        hist2.forEach(k => {
+            if (map1.has(k.time)) {
+                let c1 = map1.get(k.time);
+                let c2 = k.close;
+                if (c1 > 0) {
+                    let sp = ((c2 - c1) / c1) * 100;
+                    spreadData.push({ time: k.time, value: sp });
+                }
+            }
+        });
+
+        spreadData.sort((a, b) => a.time - b.time);
+        spreadSeries.setData(spreadData);
+        spreadChart.timeScale().fitContent();
+    } catch(e) {
+        console.error("Помилка завантаження історії спреду:", e);
+    }
 }
 
 function updateLiveCandle(exIndex, price) {
@@ -192,10 +263,7 @@ let tickHistory = { 1: [], 2: [] };
 
 function handleTrade(exIndex, price, qty, isBuy) {
     if (isNaN(price) || isNaN(qty)) return;
-    
     const volUsdt = price * qty;
-    
-    // Захист від поламаних даних API (щоб не малювати шаріки на $100 млн і не ламати канвас)
     if (volUsdt > 50000000) return; 
 
     const hist = tickHistory[exIndex];
@@ -418,7 +486,6 @@ let ws1Active = false, ws2Active = false;
 let mexcFutMultiplier1 = 1;
 let mexcFutMultiplier2 = 1;
 
-// Покращене отримання множника з системою ретраїв
 async function fetchMexcMultiplier(exIndex, exName, symbol, retries = 3) {
     if (exName !== 'MEXC') return;
     const s = symbol.replace('_', '').toUpperCase().replace('USDT', '_USDT');
@@ -438,7 +505,6 @@ async function fetchMexcMultiplier(exIndex, exName, symbol, retries = 3) {
             await new Promise(res => setTimeout(res, 500));
         }
     }
-    console.error(`❌ [MEXC Fut] Не вдалося завантажити множник для ${s}. Об'єми можуть бути неточними.`);
 }
 
 function updateStatusDot() {
@@ -467,12 +533,10 @@ function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
     if (!wsUrl) return null;
-    console.log(`[WS Ініціалізація] Спроба підключення до ${exName} за адресою: ${wsUrl} (Символ: ${subSym})`);
     
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-        console.log(`✅ [WS Успіх] Підключено до ${exName}`);
         if (exIndex === 1) ws1Active = true; else ws2Active = true;
         updateStatusDot();
 
@@ -493,7 +557,6 @@ function connectExchange(exIndex, exName, symbol) {
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: subSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: subSym.replace('USDT', '_USDT') } }));
             
-            // Завантаження початкового стакану для ф'ючерсів (щоб не було пустоти до перших дельт)
             axios.get(`https://contract.mexc.com/api/v1/contract/depth/${subSym.replace('USDT', '_USDT')}?limit=20`)
                 .then(res => {
                     if (res.data && res.data.data) {
@@ -513,7 +576,6 @@ function connectExchange(exIndex, exName, symbol) {
             spotSubs.forEach((subChannel, i) => {
                 setTimeout(() => {
                     if (ws.readyState === WebSocket.OPEN) {
-                        console.log(`[WS Відправка підписки] MEXC Spot:`, subChannel);
                         ws.send(JSON.stringify({ method: 'SUBSCRIPTION', params: [subChannel] }));
                     }
                 }, i * 150);
@@ -524,95 +586,53 @@ function connectExchange(exIndex, exName, symbol) {
         }
     };
 
-    ws.onerror = (error) => {
-        console.error(`❌ [WS Помилка З'єднання] ${exName}:`, error);
-    };
+    ws.onerror = (error) => {};
 
     ws.onmessage = (event) => {
         try {
             const data = JSON.parse(event.data);
-            
-            if (data.code !== undefined && data.code !== 0 && data.code !== 200) {
-                console.error(`⚠️ [API Помилка] ${exName} повернула помилку:`, data);
-            }
 
-            // ==========================================
-            // ФОЛЛБЕК ДЛЯ ЗАБЛОКОВАНИХ МОНЕТ MEXC SPOT
-            // ==========================================
             if (exName === 'MEXC Spot' && data.msg && typeof data.msg === 'string' && data.msg.includes('Blocked')) {
                 if (!window[`mexc_rest_fallback_${exIndex}`]) {
                     window[`mexc_rest_fallback_${exIndex}`] = true;
-                    console.warn(`🚨 [MEXC WS БЛОКУВАННЯ] MEXC відхилив WebSocket підписку для ${subSym}. Переходимо на надійний REST API...`);
-                    
                     const midContainer = document.getElementById(`ob-mid-${exIndex}`);
                     if (midContainer) midContainer.style.color = '#f1c40f'; 
-                    
                     ws.close(); 
-
                     let isRateLimited = false;
-
                     const pollMexcRest = async () => {
                         if (isRateLimited) return;
-
                         try {
                             const [depthRes, tradesRes, tickerRes] = await Promise.all([
                                 axios.get(`https://api.mexc.com/api/v3/depth?symbol=${subSym}&limit=15`),
                                 axios.get(`https://api.mexc.com/api/v3/trades?symbol=${subSym}&limit=15`),
                                 axios.get(`https://api.mexc.com/api/v3/ticker/price?symbol=${subSym}`)
                             ]);
-
-                            if (depthRes.data && depthRes.data.asks) {
-                                updateObState(exIndex, 'snapshot', depthRes.data.asks, depthRes.data.bids);
-                            }
-                            
+                            if (depthRes.data && depthRes.data.asks) updateObState(exIndex, 'snapshot', depthRes.data.asks, depthRes.data.bids);
                             if (tradesRes.data && tradesRes.data.length > 0) {
                                 window[`mexc_last_time_${exIndex}`] = window[`mexc_last_time_${exIndex}`] || 0;
                                 window[`mexc_keys_${exIndex}`] = window[`mexc_keys_${exIndex}`] || new Set();
-                                
-                                let lastT = window[`mexc_last_time_${exIndex}`];
-                                let keys = window[`mexc_keys_${exIndex}`];
-                                let newMax = lastT;
-
+                                let lastT = window[`mexc_last_time_${exIndex}`], keys = window[`mexc_keys_${exIndex}`], newMax = lastT;
                                 tradesRes.data.forEach(t => {
                                     const key = `${t.time}_${t.price}_${t.qty}`; 
                                     if (t.time >= lastT && !keys.has(key)) {
                                         handleTrade(exIndex, parseFloat(t.price), parseFloat(t.qty), !t.isBuyerMaker);
-                                        keys.add(key);
-                                        if (t.time > newMax) newMax = t.time;
+                                        keys.add(key); if (t.time > newMax) newMax = t.time;
                                     }
                                 });
-
                                 window[`mexc_last_time_${exIndex}`] = newMax;
                                 if (keys.size > 150) window[`mexc_keys_${exIndex}`] = new Set(Array.from(keys).slice(-50));
                             }
-                            
-                            if (tickerRes.data && tickerRes.data.price) {
-                                updateLiveCandle(exIndex, parseFloat(tickerRes.data.price));
-                            }
+                            if (tickerRes.data && tickerRes.data.price) updateLiveCandle(exIndex, parseFloat(tickerRes.data.price));
                         } catch (err) {
                             if (err.response && (err.response.status === 429 || err.response.status === 418)) {
-                                console.warn(`⏳ [MEXC API LIMIT] Біржа просить збавити темп. Пауза REST запитів на 10 секунд...`);
-                                isRateLimited = true;
-                                setTimeout(() => {
-                                    console.log(`▶️ [MEXC API LIMIT] Пауза закінчилась, продовжуємо завантаження.`);
-                                    isRateLimited = false;
-                                }, 10000);
+                                isRateLimited = true; setTimeout(() => isRateLimited = false, 10000);
                             }
                         }
                     };
-
-                    pollMexcRest(); 
-                    setInterval(pollMexcRest, 1500); 
+                    pollMexcRest(); setInterval(pollMexcRest, 1500); 
                 }
             }
 
-            if (exName.includes('MEXC') && !window[`mexc_debug_${exIndex}`]) { window[`mexc_debug_${exIndex}`] = 0; }
-            if (exName.includes('MEXC') && window[`mexc_debug_${exIndex}`] < 4) {
-                console.log(`[Дебаг Дані ${exName}] Повідомлення #${window[`mexc_debug_${exIndex}`] + 1}:`, data);
-                window[`mexc_debug_${exIndex}`]++;
-            }
-
-            // 1. ТІКЕРИ
             let price = null;
             if (exName.startsWith('Binance') && data.data && data.data.c) price = parseFloat(data.data.c); 
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('tickers') && data.data.lastPrice) price = parseFloat(data.data.lastPrice);
@@ -625,33 +645,19 @@ function connectExchange(exIndex, exName, symbol) {
 
             if (price) updateLiveCandle(exIndex, price);
 
-            // 2. СТАКАН
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) {
-                updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
-            } else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) {
-                updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            } else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') {
-                updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
-            } else if (exName === 'MEXC' && data.channel === 'push.depth') {
-                // ПОВЕРНУТО ДО РЕЖИМУ DELTA ДЛЯ УСУНЕННЯ МИГАННЯ
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
+            else if (exName === 'MEXC' && data.channel === 'push.depth') {
                 const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
                 const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
                 updateObState(exIndex, 'delta', adjust(data.data.asks), adjust(data.data.bids));
-            } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) {
-                updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
-            } else if (exName === 'MEXC Spot' && data.c && data.c.includes('increase.depth.v3.api') && data.d) {
-                updateObState(exIndex, 'delta', data.d.asks || [], data.d.bids || []);
-            } else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) {
-                updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
-            }
+            } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('increase.depth.v3.api') && data.d) updateObState(exIndex, 'delta', data.d.asks || [], data.d.bids || []);
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
 
-            // 3. УГОДИ (ШАРІКИ)
-            if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) {
-                handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m); 
-            }
-            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('publicTrade') && data.data) {
-                data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
-            }
+            if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m); 
+            else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('publicTrade') && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
             else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('trades') && data.result) {
                 const tradesData = Array.isArray(data.result) ? data.result : [data.result];
                 tradesData.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
@@ -661,26 +667,16 @@ function connectExchange(exIndex, exName, symbol) {
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
                 deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v) * mult, t.T === 1));
             }
-            else if (exName === 'MEXC Spot' && data.c && data.c.includes('deals.v3.api') && data.d && data.d.deals) {
-                data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
-            }
-            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) {
-                data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
-            }
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('deals.v3.api') && data.d && data.d.deals) data.d.deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 1));
+            else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'trade' && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t[1]), parseFloat(t[2]), t[3] === 'buy'));
 
         } catch (err) {}
     };
 
     ws.onclose = (event) => {
-        console.warn(`🔌 [WS Закрито] ${exName} - Код: ${event.code}.`);
         if (exIndex === 1) ws1Active = false; else ws2Active = false;
         updateStatusDot();
-        
-        if (!window[`mexc_rest_fallback_${exIndex}`]) {
-            setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
-        } else {
-            console.log(`[WS] Реконект скасовано, працює надійний REST Fallback.`);
-        }
+        if (!window[`mexc_rest_fallback_${exIndex}`]) setTimeout(() => connectExchange(exIndex, exName, symbol), 3000);
     };
 
     return ws;
@@ -690,13 +686,16 @@ function connectExchange(exIndex, exName, symbol) {
 // 8. ЗАПУСК ТА PING
 // ==========================================
 async function initLive() {
-    // Гарантоване завантаження множників ПЕРЕД відкриттям сокетів
     await Promise.all([
         fetchMexcMultiplier(1, rawEx1Name, symbol),
         fetchMexcMultiplier(2, rawEx2Name, symbol)
     ]);
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
+    
+    // ЗАВАНТАЖЕННЯ І ВІДМАЛЬОВКА ГРАФІКА СПРЕДУ
+    loadAndRenderSpreadChart();
+    
     ws1 = connectExchange(1, rawEx1Name, symbol);
     ws2 = connectExchange(2, rawEx2Name, symbol);
 }

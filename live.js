@@ -191,9 +191,14 @@ let obState = { 1: { asks: [], bids: [] }, 2: { asks: [], bids: [] } };
 let tickHistory = { 1: [], 2: [] }; 
 
 function handleTrade(exIndex, price, qty, isBuy) {
-    const volUsdt = price * qty;
-    const hist = tickHistory[exIndex];
+    if (isNaN(price) || isNaN(qty)) return;
     
+    const volUsdt = price * qty;
+    
+    // Захист від поламаних даних API (щоб не малювати шаріки на $100 млн і не ламати канвас)
+    if (volUsdt > 50000000) return; 
+
+    const hist = tickHistory[exIndex];
     if (hist.length > 0) {
         const last = hist[0]; 
         if (last.p === parseFloat(price) && last.isBuy === isBuy) {
@@ -410,24 +415,30 @@ requestAnimationFrame(drawTicksLoop);
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
 
-// Змінні для множника контрактів ф'ючерсів MEXC
 let mexcFutMultiplier1 = 1;
 let mexcFutMultiplier2 = 1;
 
-async function fetchMexcMultiplier(exIndex, exName, symbol) {
-    if (exName !== 'MEXC') return; // Виконуємо тільки для ф'ючерсів MEXC
-    try {
-        const s = symbol.replace('_', '').toUpperCase().replace('USDT', '_USDT');
-        const r = await axios.get(`https://contract.mexc.com/api/v1/contract/detail?symbol=${s}`);
-        if (r.data && r.data.data && r.data.data.contractSize) {
-            const size = parseFloat(r.data.data.contractSize);
-            if (exIndex === 1) mexcFutMultiplier1 = size;
-            else mexcFutMultiplier2 = size;
-            console.log(`[MEXC Fut] Множник для ${s}: ${size}`);
+// Покращене отримання множника з системою ретраїв
+async function fetchMexcMultiplier(exIndex, exName, symbol, retries = 3) {
+    if (exName !== 'MEXC') return;
+    const s = symbol.replace('_', '').toUpperCase().replace('USDT', '_USDT');
+    
+    for (let i = 0; i < retries; i++) {
+        try {
+            const r = await axios.get(`https://contract.mexc.com/api/v1/contract/detail?symbol=${s}`);
+            if (r.data && r.data.data && r.data.data.contractSize) {
+                const size = parseFloat(r.data.data.contractSize);
+                if (exIndex === 1) mexcFutMultiplier1 = size;
+                else mexcFutMultiplier2 = size;
+                console.log(`✅ [MEXC Fut] Успішно отримано множник для ${s}: ${size}`);
+                return;
+            }
+        } catch(e) {
+            console.warn(`[MEXC Fut] Спроба ${i+1} отримати множник для ${s} не вдалась. Повтор...`);
+            await new Promise(res => setTimeout(res, 500));
         }
-    } catch(e) {
-        console.error("[MEXC Fut] Помилка завантаження множника:", e);
     }
+    console.error(`❌ [MEXC Fut] Не вдалося завантажити множник для ${s}. Об'єми можуть бути неточними.`);
 }
 
 function updateStatusDot() {
@@ -481,6 +492,17 @@ function connectExchange(exIndex, exName, symbol) {
             ws.send(JSON.stringify({ method: 'sub.ticker', param: { symbol: subSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.depth', param: { symbol: subSym.replace('USDT', '_USDT') } }));
             ws.send(JSON.stringify({ method: 'sub.deal', param: { symbol: subSym.replace('USDT', '_USDT') } }));
+            
+            // Завантаження початкового стакану для ф'ючерсів (щоб не було пустоти до перших дельт)
+            axios.get(`https://contract.mexc.com/api/v1/contract/depth/${subSym.replace('USDT', '_USDT')}?limit=20`)
+                .then(res => {
+                    if (res.data && res.data.data) {
+                        const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
+                        const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
+                        updateObState(exIndex, 'snapshot', adjust(res.data.data.asks), adjust(res.data.data.bids));
+                    }
+                }).catch(e => console.error("Помилка завантаження початкового стакану MEXC Futures", e));
+                
         } else if (exName === 'MEXC Spot') {
             const spotSubs = [
                 `spot@public.deals.v3.api@${subSym}`,
@@ -611,10 +633,10 @@ function connectExchange(exIndex, exName, symbol) {
             } else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') {
                 updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
             } else if (exName === 'MEXC' && data.channel === 'push.depth') {
-                // ВИПРАВЛЕНО: Використовуємо snapshot замість delta та множимо контракти на їх розмір
+                // ПОВЕРНУТО ДО РЕЖИМУ DELTA ДЛЯ УСУНЕННЯ МИГАННЯ
                 const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
                 const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
-                updateObState(exIndex, 'snapshot', adjust(data.data.asks), adjust(data.data.bids));
+                updateObState(exIndex, 'delta', adjust(data.data.asks), adjust(data.data.bids));
             } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) {
                 updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
             } else if (exName === 'MEXC Spot' && data.c && data.c.includes('increase.depth.v3.api') && data.d) {
@@ -635,7 +657,6 @@ function connectExchange(exIndex, exName, symbol) {
                 tradesData.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
             }
             else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
-                // ВИПРАВЛЕНО: Множимо об'єм у контрактах на розмір контракту
                 const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
                 deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v) * mult, t.T === 1));
@@ -669,9 +690,11 @@ function connectExchange(exIndex, exName, symbol) {
 // 8. ЗАПУСК ТА PING
 // ==========================================
 async function initLive() {
-    // Спочатку завантажуємо правильні множники контрактів для MEXC
-    await fetchMexcMultiplier(1, rawEx1Name, symbol);
-    await fetchMexcMultiplier(2, rawEx2Name, symbol);
+    // Гарантоване завантаження множників ПЕРЕД відкриттям сокетів
+    await Promise.all([
+        fetchMexcMultiplier(1, rawEx1Name, symbol),
+        fetchMexcMultiplier(2, rawEx2Name, symbol)
+    ]);
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
     ws1 = connectExchange(1, rawEx1Name, symbol);

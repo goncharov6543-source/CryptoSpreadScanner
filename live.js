@@ -1,14 +1,12 @@
 const axios = require('axios');
 
 // ==========================================
-// 1. БАЗОВІ НАЛАШТУВАННЯ ТА ЧАС
+// 1. БАЗОВІ НАЛАШТУВАННЯ
 // ==========================================
 const urlParams = new URLSearchParams(window.location.search);
 const symbol = urlParams.get('symbol');
 const rawEx1Name = urlParams.get('ex1');
 const rawEx2Name = urlParams.get('ex2');
-
-const tzOffset = new Date().getTimezoneOffset() * -60;
 
 function formatExName(name) {
     return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
@@ -31,6 +29,12 @@ function formatPrice(p) {
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
+// Нативна функція локалізації часу для графіків
+const customTimeFormatter = (timestamp) => {
+    const d = new Date(timestamp * 1000);
+    return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+};
+
 // ==========================================
 // 2. ГРАФІК (Lightweight Charts)
 // ==========================================
@@ -38,6 +42,7 @@ const chartOptions = {
     layout: { textColor: '#d1d4dc', background: { type: 'solid', color: '#0b0e11' } },
     grid: { vertLines: { color: '#2b3139', style: 1 }, horzLines: { color: '#2b3139', style: 1 } },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
+    localization: { timeFormatter: customTimeFormatter },
     rightPriceScale: { borderColor: '#2b3139', autoScale: true },
     leftPriceScale: { visible: true, borderColor: '#2b3139', autoScale: true }, 
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
@@ -59,6 +64,7 @@ const spreadChartOptions = {
         horzLines: { color: '#1e2329', style: 2 } 
     },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
+    localization: { timeFormatter: customTimeFormatter },
     rightPriceScale: { borderColor: '#2b3139', autoScale: true },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal }
 };
@@ -71,6 +77,7 @@ const spreadSeries = spreadChart.addAreaSeries({
     priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
 });
 
+// Адаптація розмірів
 window.addEventListener('resize', () => { 
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
     spreadChart.resize(spreadChartContainer.clientWidth, spreadChartContainer.clientHeight);
@@ -110,7 +117,7 @@ function updateLiveSpread() {
         let sp = (((currentP2 - currentP1) / currentP1) * 100);
         document.getElementById('header-spread').innerText = sp.toFixed(2) + '%';
         
-        const currentCandleTime = Math.floor(Date.now() / 60000) * 60 + tzOffset;
+        const currentCandleTime = Math.floor(Date.now() / 60000) * 60;
         try { spreadSeries.update({ time: currentCandleTime, value: sp }); } catch(e) {}
     }
 }
@@ -159,11 +166,8 @@ window.changeInterval = async function(mins, btnElement) {
     series1.applyOptions({ priceFormat: formatParams });
     series2.applyOptions({ priceFormat: formatParams });
 
-    const adjHist1 = hist1.map(k => ({ ...k, time: k.time + tzOffset }));
-    const adjHist2 = hist2.map(k => ({ ...k, time: k.time + tzOffset }));
-
-    if (adjHist1.length > 0) { series1.setData(adjHist1); lastCandle1 = adjHist1[adjHist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
-    if (adjHist2.length > 0) { series2.setData(adjHist2); lastCandle2 = adjHist2[adjHist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
+    if (hist1.length > 0) { series1.setData(hist1); lastCandle1 = hist1[hist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
+    if (hist2.length > 0) { series2.setData(hist2); lastCandle2 = hist2[hist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
     
     if (currentP1 && currentP2) {
         const ratio = Math.max(currentP1 / currentP2, currentP2 / currentP1);
@@ -216,7 +220,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     } catch(e) { return []; }
 }
 
-// ОНОВЛЕНИЙ ЧАНКОВИЙ ЗАВАНТАЖУВАЧ (Надійний, з ретраями)
+// ЧАНКОВИЙ ЗАВАНТАЖУВАЧ З РЕТРАЯМИ
 async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
@@ -253,15 +257,14 @@ async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
                 else if (ex === 'Gate.io') { if (isSpot) chunk = r.data.map(k => ({ time: parseInt(k[0]), close: parseFloat(k[2]) })); else chunk = r.data.map(k => ({ time: parseInt(k.t), close: parseFloat(k.c) })); }
                 else if (ex === 'Bitget') chunk = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
                 else if (ex === 'MEXC') { if (isSpot) chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })); else if (r.data.data && r.data.data.time) { const d = r.data.data; for(let i=0; i<d.time.length; i++) chunk.push({ time: parseInt(d.time[i]), close: parseFloat(d.close[i]) }); chunk = chunk.slice(-limit); } }
-                break; // Успішно отримали
+                break; 
             } catch(e) {
                 retries--;
-                if(retries === 0) console.error(`[History Fetch] Помилка завантаження ${exName}:`, e.message);
-                else await new Promise(res => setTimeout(res, 1000));
+                if(retries > 0) await new Promise(res => setTimeout(res, 1000));
             }
         }
 
-        if (!chunk || chunk.length === 0) break; // Якщо реально кінець історії
+        if (!chunk || chunk.length === 0) break;
         
         chunk.sort((a,b) => a.time - b.time); 
         allData = chunk.concat(allData);
@@ -323,14 +326,14 @@ window.loadSpreadHistory = async function(days, btnElement) {
                 let c2 = k.close;
                 if (c1 > 0) {
                     let sp = ((c2 - c1) / c1) * 100;
-                    spreadData.push({ time: k.time + tzOffset, value: sp }); 
+                    spreadData.push({ time: k.time, value: sp }); 
                 }
             }
         });
 
         spreadData.sort((a, b) => a.time - b.time);
         spreadSeries.setData(spreadData);
-        spreadChart.timeScale().fitContent();
+        spreadChart.timeScale().fitContent(); // Авто-масштаб на всю ширину
         
     } catch(e) {
         console.error("Помилка завантаження історії спреду:", e);
@@ -340,6 +343,29 @@ window.loadSpreadHistory = async function(days, btnElement) {
         }, 1000);
     }
 };
+
+function updateLiveCandle(exIndex, price) {
+    const intervalMs = currentIntervalMins * 60 * 1000;
+    const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000);
+
+    let lastCandle = exIndex === 1 ? lastCandle1 : lastCandle2;
+    let series = exIndex === 1 ? series1 : series2;
+
+    document.getElementById(`price-ex${exIndex}`).innerText = formatPrice(price);
+    document.getElementById(`ob-mid-${exIndex}`).innerText = formatPrice(price);
+
+    if (!lastCandle) lastCandle = { time: currentCandleTime, open: price, high: price, low: price, close: price };
+    else if (lastCandle.time === currentCandleTime) {
+        lastCandle.close = price;
+        if (price > lastCandle.high) lastCandle.high = price;
+        if (price < lastCandle.low) lastCandle.low = price;
+    } else if (currentCandleTime > lastCandle.time) {
+        lastCandle = { time: currentCandleTime, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
+    }
+
+    if (exIndex === 1) { lastCandle1 = lastCandle; currentP1 = price; } else { lastCandle2 = lastCandle; currentP2 = price; }
+    updateLiveSpread(); try { series.update(lastCandle); } catch(e) {}
+}
 
 // ==========================================
 // 5. ДВИЖОК СТАКАНА ТА АГРЕГАЦІЯ
@@ -462,7 +488,7 @@ function renderOrderBook(exIndex) {
 }
 
 // ==========================================
-// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД (Точна математика Y)
+// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД
 // ==========================================
 function drawTicksLoop() {
     const scaleMult = domConfig.scale / 100;
@@ -790,7 +816,6 @@ async function initLive() {
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
     
-    // Завантажуємо стартовий графік спреду
     window.loadSpreadHistory(0.5, document.querySelector('.btn-spread-time.active'));
     
     ws1 = connectExchange(1, rawEx1Name, symbol);

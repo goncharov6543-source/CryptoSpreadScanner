@@ -8,7 +8,6 @@ const symbol = urlParams.get('symbol');
 const rawEx1Name = urlParams.get('ex1');
 const rawEx2Name = urlParams.get('ex2');
 
-// Отримуємо зміщення локального часу комп'ютера у секундах
 const tzOffset = new Date().getTimezoneOffset() * -60;
 
 function formatExName(name) {
@@ -72,7 +71,6 @@ const spreadSeries = spreadChart.addAreaSeries({
     priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
 });
 
-// Адаптація розмірів
 window.addEventListener('resize', () => { 
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
     spreadChart.resize(spreadChartContainer.clientWidth, spreadChartContainer.clientHeight);
@@ -112,7 +110,6 @@ function updateLiveSpread() {
         let sp = (((currentP2 - currentP1) / currentP1) * 100);
         document.getElementById('header-spread').innerText = sp.toFixed(2) + '%';
         
-        // Додаємо tzOffset для локального часу на графіку спреду
         const currentCandleTime = Math.floor(Date.now() / 60000) * 60 + tzOffset;
         try { spreadSeries.update({ time: currentCandleTime, value: sp }); } catch(e) {}
     }
@@ -162,14 +159,12 @@ window.changeInterval = async function(mins, btnElement) {
     series1.applyOptions({ priceFormat: formatParams });
     series2.applyOptions({ priceFormat: formatParams });
 
-    // Застосовуємо зміщення часу (tzOffset) до всіх свічок перед відмальовкою
     const adjHist1 = hist1.map(k => ({ ...k, time: k.time + tzOffset }));
     const adjHist2 = hist2.map(k => ({ ...k, time: k.time + tzOffset }));
 
     if (adjHist1.length > 0) { series1.setData(adjHist1); lastCandle1 = adjHist1[adjHist1.length - 1]; currentP1 = lastCandle1.close; document.getElementById('price-ex1').innerText = formatPrice(currentP1); }
     if (adjHist2.length > 0) { series2.setData(adjHist2); lastCandle2 = adjHist2[adjHist2.length - 1]; currentP2 = lastCandle2.close; document.getElementById('price-ex2').innerText = formatPrice(currentP2); }
     
-    // АВТО-МАСШТАБ СИНЬОГО ГРАФІКА
     if (currentP1 && currentP2) {
         const ratio = Math.max(currentP1 / currentP2, currentP2 / currentP1);
         if (ratio < 3) {
@@ -221,7 +216,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     } catch(e) { return []; }
 }
 
-// ЧАНКОВИЙ ЗАВАНТАЖУВАЧ (Для обходу банів при завантаженні 3D та 7D)
+// ОНОВЛЕНИЙ ЧАНКОВИЙ ЗАВАНТАЖУВАЧ (Надійний, з ретраями)
 async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
@@ -241,38 +236,41 @@ async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
         let toMs = currentEndTime;
         let limit = Math.min(1000, totalCandles - allData.length);
 
-        try {
-            if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}`;
-            else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${reqSym}&interval=1&limit=${limit}&end=${toMs}`;
-            else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${reqSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${reqSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}`;
-            else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${reqSym}&granularity=1min&limit=${limit}&endTime=${toMs}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${reqSym}&productType=USDT-FUTURES&granularity=1m&limit=${limit}&endTime=${toMs}`;
-            else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}` : `https://contract.mexc.com/api/v1/contract/kline/${reqSym.replace('USDT','_USDT')}?interval=Min1&end=${toSec}`;
+        if (ex === 'Binance') url = isSpot ? `https://api.binance.com/api/v3/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}` : `https://fapi.binance.com/fapi/v1/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}`;
+        else if (ex === 'Bybit') url = `https://api.bybit.com/v5/market/kline?category=${isSpot ? 'spot' : 'linear'}&symbol=${reqSym}&interval=1&limit=${limit}&end=${toMs}`;
+        else if (ex === 'Gate.io') url = isSpot ? `https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair=${reqSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}` : `https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract=${reqSym.replace('USDT','_USDT')}&interval=1m&limit=${limit}&to=${toSec}`;
+        else if (ex === 'Bitget') url = isSpot ? `https://api.bitget.com/api/v2/spot/market/candles?symbol=${reqSym}&granularity=1min&limit=${limit}&endTime=${toMs}` : `https://api.bitget.com/api/v2/mix/market/candles?symbol=${reqSym}&productType=USDT-FUTURES&granularity=1m&limit=${limit}&endTime=${toMs}`;
+        else if (ex === 'MEXC') url = isSpot ? `https://api.mexc.com/api/v3/klines?symbol=${reqSym}&interval=1m&limit=${limit}&endTime=${toMs}` : `https://contract.mexc.com/api/v1/contract/kline/${reqSym.replace('USDT','_USDT')}?interval=Min1&end=${toSec}`;
 
-            const r = await axios.get(url, { timeout: 7000 });
-            let chunk = [];
-            
-            if (ex === 'Binance') chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
-            else if (ex === 'Bybit') chunk = r.data.result.list.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })).reverse();
-            else if (ex === 'Gate.io') { if (isSpot) chunk = r.data.map(k => ({ time: parseInt(k[0]), close: parseFloat(k[2]) })); else chunk = r.data.map(k => ({ time: parseInt(k.t), close: parseFloat(k.c) })); }
-            else if (ex === 'Bitget') chunk = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
-            else if (ex === 'MEXC') { if (isSpot) chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })); else if (r.data.data && r.data.data.time) { const d = r.data.data; for(let i=0; i<d.time.length; i++) chunk.push({ time: parseInt(d.time[i]), close: parseFloat(d.close[i]) }); chunk = chunk.slice(-limit); } }
-
-            if (!chunk || chunk.length === 0) break;
-            
-            chunk.sort((a,b) => a.time - b.time); 
-            allData = chunk.concat(allData);
-            currentEndTime = (chunk[0].time * 1000) - 1; 
-            
-            if (onProgress) onProgress(chunk.length);
-            if (chunk.length < limit * 0.5) break; 
-            if (allData.length >= totalCandles) break;
-            
-            await new Promise(res => setTimeout(res, 250)); // Пауза між чанками
-            
-        } catch(e) {
-            console.error(`Chunk fetch error ${exName}:`, e.message);
-            break;
+        let chunk = [];
+        let retries = 3;
+        
+        while (retries > 0) {
+            try {
+                const r = await axios.get(url, { timeout: 7000 });
+                if (ex === 'Binance') chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
+                else if (ex === 'Bybit') chunk = r.data.result.list.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })).reverse();
+                else if (ex === 'Gate.io') { if (isSpot) chunk = r.data.map(k => ({ time: parseInt(k[0]), close: parseFloat(k[2]) })); else chunk = r.data.map(k => ({ time: parseInt(k.t), close: parseFloat(k.c) })); }
+                else if (ex === 'Bitget') chunk = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
+                else if (ex === 'MEXC') { if (isSpot) chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })); else if (r.data.data && r.data.data.time) { const d = r.data.data; for(let i=0; i<d.time.length; i++) chunk.push({ time: parseInt(d.time[i]), close: parseFloat(d.close[i]) }); chunk = chunk.slice(-limit); } }
+                break; // Успішно отримали
+            } catch(e) {
+                retries--;
+                if(retries === 0) console.error(`[History Fetch] Помилка завантаження ${exName}:`, e.message);
+                else await new Promise(res => setTimeout(res, 1000));
+            }
         }
+
+        if (!chunk || chunk.length === 0) break; // Якщо реально кінець історії
+        
+        chunk.sort((a,b) => a.time - b.time); 
+        allData = chunk.concat(allData);
+        currentEndTime = (chunk[0].time * 1000) - 1; 
+        
+        if (onProgress) onProgress(chunk.length);
+        if (allData.length >= totalCandles) break;
+        
+        await new Promise(res => setTimeout(res, 250));
     }
     
     const uniqueData = []; let lastTime = 0;
@@ -316,7 +314,7 @@ window.loadSpreadHistory = async function(days, btnElement) {
         ]);
 
         let map1 = new Map();
-        hist1.forEach(k => map1.set(k.time, k.close)); // Зберігаємо як UTC
+        hist1.forEach(k => map1.set(k.time, k.close));
 
         let spreadData = [];
         hist2.forEach(k => {
@@ -325,7 +323,6 @@ window.loadSpreadHistory = async function(days, btnElement) {
                 let c2 = k.close;
                 if (c1 > 0) {
                     let sp = ((c2 - c1) / c1) * 100;
-                    // Додаємо зміщення часу (tzOffset) при пуші в масив для графіку
                     spreadData.push({ time: k.time + tzOffset, value: sp }); 
                 }
             }
@@ -333,8 +330,6 @@ window.loadSpreadHistory = async function(days, btnElement) {
 
         spreadData.sort((a, b) => a.time - b.time);
         spreadSeries.setData(spreadData);
-        
-        // Розтягуємо на всю ширину тільки графік спреду
         spreadChart.timeScale().fitContent();
         
     } catch(e) {
@@ -345,30 +340,6 @@ window.loadSpreadHistory = async function(days, btnElement) {
         }, 1000);
     }
 };
-
-function updateLiveCandle(exIndex, price) {
-    const intervalMs = currentIntervalMins * 60 * 1000;
-    // Додаємо зміщення часу до поточного
-    const currentCandleTime = Math.floor(Date.now() / intervalMs) * (intervalMs / 1000) + tzOffset;
-
-    let lastCandle = exIndex === 1 ? lastCandle1 : lastCandle2;
-    let series = exIndex === 1 ? series1 : series2;
-
-    document.getElementById(`price-ex${exIndex}`).innerText = formatPrice(price);
-    document.getElementById(`ob-mid-${exIndex}`).innerText = formatPrice(price);
-
-    if (!lastCandle) lastCandle = { time: currentCandleTime, open: price, high: price, low: price, close: price };
-    else if (lastCandle.time === currentCandleTime) {
-        lastCandle.close = price;
-        if (price > lastCandle.high) lastCandle.high = price;
-        if (price < lastCandle.low) lastCandle.low = price;
-    } else if (currentCandleTime > lastCandle.time) {
-        lastCandle = { time: currentCandleTime, open: lastCandle.close, high: Math.max(lastCandle.close, price), low: Math.min(lastCandle.close, price), close: price };
-    }
-
-    if (exIndex === 1) { lastCandle1 = lastCandle; currentP1 = price; } else { lastCandle2 = lastCandle; currentP2 = price; }
-    updateLiveSpread(); try { series.update(lastCandle); } catch(e) {}
-}
 
 // ==========================================
 // 5. ДВИЖОК СТАКАНА ТА АГРЕГАЦІЯ
@@ -491,7 +462,7 @@ function renderOrderBook(exIndex) {
 }
 
 // ==========================================
-// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД
+// 6. ВІДМАЛЬОВКА ШАРІКІВ УГОД (Точна математика Y)
 // ==========================================
 function drawTicksLoop() {
     const scaleMult = domConfig.scale / 100;
@@ -522,9 +493,10 @@ function drawTicksLoop() {
         const bids = aggregateDOM(obState[exIndex].bids, false, domConfig.precision).slice(0, 15);
         if (asks.length === 0 || bids.length === 0) return;
 
-        const maxP = asks.length > 0 ? asks[0].p : currentP1; 
-        const minP = bids.length > 0 ? bids[bids.length - 1].p : currentP1; 
-        if (maxP === minP) return;
+        const bestAsk = asks[asks.length - 1].p;
+        const highestAsk = asks[0].p;
+        const bestBid = bids[0].p;
+        const lowestBid = bids[bids.length - 1].p;
 
         const rowH = h / 31; 
 
@@ -532,16 +504,31 @@ function drawTicksLoop() {
         ctx.strokeStyle = 'rgba(132, 142, 156, 0.6)';
         ctx.lineWidth = 2 * scaleMult;
         
+        const getTickY = (tickP) => {
+            if (tickP >= bestAsk) {
+                if (highestAsk === bestAsk) return 15 * rowH - (rowH / 2);
+                const askTop = (15 - asks.length) * rowH;
+                const askBottom = 15 * rowH;
+                const ratio = (highestAsk - tickP) / (highestAsk - bestAsk);
+                return askTop + (rowH / 2) + ratio * (askBottom - askTop - rowH);
+            } else if (tickP <= bestBid) {
+                if (bestBid === lowestBid) return 16 * rowH + (rowH / 2);
+                const bidTop = 16 * rowH;
+                const bidBottom = (16 + bids.length) * rowH;
+                const ratio = (bestBid - tickP) / (bestBid - lowestBid);
+                return bidTop + (rowH / 2) + ratio * (bidBottom - bidTop - rowH);
+            } else {
+                return 15.5 * rowH;
+            }
+        };
+        
         let validPoints = 0;
         for (let i = 0; i < hist.length; i++) {
             const tick = hist[i];
             const x = w - paddingRight - (i * stepX);
-            
             if (x < -100) { hist.splice(i); break; }
 
-            const emptyAsksOffset = (15 - asks.length) * rowH;
-            const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
-
+            const y = getTickY(tick.p);
             if (validPoints === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             validPoints++;
         }
@@ -550,9 +537,7 @@ function drawTicksLoop() {
         for (let i = hist.length - 1; i >= 0; i--) {
             const tick = hist[i];
             const x = w - paddingRight - (i * stepX);
-            
-            const emptyAsksOffset = (15 - asks.length) * rowH;
-            const y = emptyAsksOffset + (rowH / 2) + ((maxP - tick.p) / (maxP - minP)) * (h - emptyAsksOffset - ((15 - bids.length) * rowH));
+            const y = getTickY(tick.p);
             
             if (y < -20 || y > h + 20) continue; 
 
@@ -590,7 +575,6 @@ function drawTicksLoop() {
 }
 
 requestAnimationFrame(drawTicksLoop);
-
 
 // ==========================================
 // 7. WEBSOCKETS (Підключення та Логування)
@@ -742,7 +726,7 @@ function connectExchange(exIndex, exName, symbol) {
                             }
                         }
                     };
-                    pollMexcRest(); setInterval(pollMexcRest, 1000); 
+                    pollMexcRest(); setInterval(pollMexcRest, 1500); 
                 }
             }
 

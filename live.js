@@ -742,7 +742,7 @@ function connectExchange(exIndex, exName, symbol) {
                             }
                         }
                     };
-                    pollMexcRest(); setInterval(pollMexcRest, 1500); 
+                    pollMexcRest(); setInterval(pollMexcRest, 1000); 
                 }
             }
 

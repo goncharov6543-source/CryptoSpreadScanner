@@ -744,7 +744,8 @@ let contractMultipliers = { 1: 1, 2: 1 };
 async function getMexcListenKey() {
     if (apiKeys['MEXC'] && apiKeys['MEXC'].key) {
         try {
-            const res = await axios.post('https://api.mexc.com/api/v3/userDataStream', null, {
+            // Виправлено: передаємо пустий об'єкт {} замість null, щоб Axios зберіг Content-Type
+            const res = await axios.post('https://api.mexc.com/api/v3/userDataStream', {}, {
                 headers: { 'X-MEXC-APIKEY': apiKeys['MEXC'].key }
             });
             if (res.data && res.data.listenKey) {
@@ -851,9 +852,10 @@ async function connectExchange(exIndex, exName, symbol) {
                 }).catch(e => {});
                 
         } else if (exName === 'MEXC Spot') {
+            // Виправлено: використовуємо limit.depth замість increase.depth, щоб не зависало
             const spotSubs = [
                 `spot@public.deals.v3.api@${subSym}`,
-                `spot@public.increase.depth.v3.api@${subSym}`, 
+                `spot@public.limit.depth.v3.api@${subSym}@20`, 
                 `spot@public.bookTicker.v3.api@${subSym}` 
             ];
             
@@ -953,8 +955,11 @@ async function connectExchange(exIndex, exName, symbol) {
                 const mult = exIndex === 1 ? contractMultipliers[1] : contractMultipliers[2];
                 const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
                 updateObState(exIndex, 'delta', adjust(data.data.asks), adjust(data.data.bids));
-            } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
-            else if (exName === 'MEXC Spot' && data.c && data.c.includes('increase.depth.v3.api') && data.d) updateObState(exIndex, 'delta', data.d.asks || [], data.d.bids || []);
+            } 
+            else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) {
+                // Відправляємо дані як snapshot
+                updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
+            }
             else if (exName.startsWith('Bitget') && data.arg && data.arg.channel === 'books15' && data.data) updateObState(exIndex, data.action === 'snapshot' ? 'snapshot' : 'delta', data.data[0].asks, data.data[0].bids);
 
             if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m); 

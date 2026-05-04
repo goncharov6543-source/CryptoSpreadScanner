@@ -479,16 +479,19 @@ function handleTrade(exIndex, price, qty, isBuy) {
     if (volUsdt > 50000000) return; 
 
     const hist = tickHistory[exIndex];
+    const now = Date.now(); 
+
     if (hist.length > 0) {
         const last = hist[0]; 
-        if (last.p === parseFloat(price) && last.isBuy === isBuy) {
+        if (last.p === parseFloat(price) && last.isBuy === isBuy && (now - last.t < 100)) {
             last.v += volUsdt;
             last.q += qty;
+            last.t = now; 
             return;
         }
     }
     
-    hist.unshift({ p: parseFloat(price), q: parseFloat(qty), v: volUsdt, isBuy: isBuy });
+    hist.unshift({ p: parseFloat(price), q: parseFloat(qty), v: volUsdt, isBuy: isBuy, t: now });
     if (hist.length > 200) hist.pop(); 
 }
 
@@ -708,8 +711,7 @@ requestAnimationFrame(drawTicksLoop);
 let ws1 = null, ws2 = null;
 let ws1Active = false, ws2Active = false;
 
-let mexcFutMultiplier1 = 1;
-let mexcFutMultiplier2 = 1;
+let contractMultipliers = { 1: 1, 2: 1 };
 
 async function getMexcListenKey() {
     if (apiKeys['MEXC'] && apiKeys['MEXC'].key) {
@@ -727,19 +729,27 @@ async function getMexcListenKey() {
     return null;
 }
 
-async function fetchMexcMultiplier(exIndex, exName, symbol, retries = 3) {
-    if (exName !== 'MEXC') return;
-    const s = symbol.replace('_', '').toUpperCase().replace('USDT', '_USDT');
+async function fetchContractMultiplier(exIndex, exName, symbol, retries = 3) {
+    if (exName.includes('Spot')) return; 
+
+    const s = symbol.replace('_', '').toUpperCase();
     
     for (let i = 0; i < retries; i++) {
         try {
-            const r = await axios.get(`https://contract.mexc.com/api/v1/contract/detail?symbol=${s}`);
-            if (r.data && r.data.data && r.data.data.contractSize) {
-                const size = parseFloat(r.data.data.contractSize);
-                if (exIndex === 1) mexcFutMultiplier1 = size;
-                else mexcFutMultiplier2 = size;
-                return;
+            if (exName === 'MEXC') {
+                const r = await axios.get(`https://contract.mexc.com/api/v1/contract/detail?symbol=${s.replace('USDT', '_USDT')}`);
+                if (r.data && r.data.data && r.data.data.contractSize) {
+                    contractMultipliers[exIndex] = parseFloat(r.data.data.contractSize);
+                    return;
+                }
+            } else if (exName === 'Gate.io') {
+                const r = await axios.get(`https://api.gateio.ws/api/v4/futures/usdt/contracts/${s.replace('USDT', '_USDT')}`);
+                if (r.data && r.data.quanto_multiplier) {
+                    contractMultipliers[exIndex] = parseFloat(r.data.quanto_multiplier);
+                    return;
+                }
             }
+            return; 
         } catch(e) {
             await new Promise(res => setTimeout(res, 500));
         }
@@ -806,7 +816,7 @@ async function connectExchange(exIndex, exName, symbol) {
             axios.get(`https://contract.mexc.com/api/v1/contract/depth/${subSym.replace('USDT', '_USDT')}?limit=20`)
                 .then(res => {
                     if (res.data && res.data.data) {
-                        const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
+                        const mult = contractMultipliers[exIndex];
                         const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
                         updateObState(exIndex, 'snapshot', adjust(res.data.data.asks), adjust(res.data.data.bids));
                     }
@@ -893,9 +903,19 @@ async function connectExchange(exIndex, exName, symbol) {
 
             if (exName.startsWith('Binance') && data.stream && data.stream.includes('depth20')) updateObState(exIndex, 'snapshot', data.data.asks, data.data.bids);
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('orderbook')) updateObState(exIndex, data.type === 'snapshot' ? 'snapshot' : 'delta', data.data.a, data.data.b);
-            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') updateObState(exIndex, 'snapshot', data.result.asks || data.result.a || [], data.result.bids || data.result.b || []); 
+            else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('order_book') && data.result && data.event !== 'subscribe') {
+                const mult = exIndex === 1 ? contractMultipliers[1] : contractMultipliers[2];
+                let asksToUpdate = data.result.asks || data.result.a || [];
+                let bidsToUpdate = data.result.bids || data.result.b || [];
+                
+                if (exName === 'Gate.io' && mult !== 1) { 
+                    asksToUpdate = asksToUpdate.map(a => { let q = a.s !== undefined ? a.s : a.q; return { p: a.p, q: parseFloat(q) * mult }; });
+                    bidsToUpdate = bidsToUpdate.map(b => { let q = b.s !== undefined ? b.s : b.q; return { p: b.p, q: parseFloat(q) * mult }; });
+                }
+                updateObState(exIndex, 'snapshot', asksToUpdate, bidsToUpdate); 
+            }
             else if (exName === 'MEXC' && data.channel === 'push.depth') {
-                const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
+                const mult = exIndex === 1 ? contractMultipliers[1] : contractMultipliers[2];
                 const adjust = (arr) => arr ? arr.map(a => [a[0], parseFloat(a[1]) * mult]) : [];
                 updateObState(exIndex, 'delta', adjust(data.data.asks), adjust(data.data.bids));
             } else if (exName === 'MEXC Spot' && data.c && data.c.includes('limit.depth.v3.api') && data.d) updateObState(exIndex, 'snapshot', data.d.asks || [], data.d.bids || []);
@@ -905,11 +925,12 @@ async function connectExchange(exIndex, exName, symbol) {
             if (exName.startsWith('Binance') && data.stream && data.stream.includes('aggTrade')) handleTrade(exIndex, parseFloat(data.data.p), parseFloat(data.data.q), !data.data.m); 
             else if (exName.startsWith('Bybit') && data.topic && data.topic.startsWith('publicTrade') && data.data) data.data.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v), t.S === 'Buy'));
             else if (exName.startsWith('Gate.io') && data.channel && data.channel.includes('trades') && data.result) {
+                const mult = exName === 'Gate.io' ? contractMultipliers[exIndex] : 1;
                 const tradesData = Array.isArray(data.result) ? data.result : [data.result];
-                tradesData.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)), t.size ? t.size > 0 : t.side === 'buy'));
+                tradesData.forEach(t => handleTrade(exIndex, parseFloat(t.price), Math.abs(parseFloat(t.size || t.amount)) * mult, t.size ? t.size > 0 : t.side === 'buy'));
             }
             else if (exName === 'MEXC' && data.channel === 'push.deal' && data.data) {
-                const mult = exIndex === 1 ? mexcFutMultiplier1 : mexcFutMultiplier2;
+                const mult = contractMultipliers[exIndex];
                 const deals = Array.isArray(data.data) ? data.data : [data.data];
                 deals.forEach(t => handleTrade(exIndex, parseFloat(t.p), parseFloat(t.v) * mult, t.T === 1));
             }
@@ -933,8 +954,8 @@ async function connectExchange(exIndex, exName, symbol) {
 // ==========================================
 async function initLive() {
     await Promise.all([
-        fetchMexcMultiplier(1, rawEx1Name, symbol),
-        fetchMexcMultiplier(2, rawEx2Name, symbol)
+        fetchContractMultiplier(1, rawEx1Name, symbol),
+        fetchContractMultiplier(2, rawEx2Name, symbol)
     ]);
     
     initTradingPanel();

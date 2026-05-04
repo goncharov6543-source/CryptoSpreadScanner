@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto'); // ПОТРІБЕН ДЛЯ ПІДПИСУ API-ЗАПИТІВ
 
 // ==========================================
 // 1. БАЗОВІ НАЛАШТУВАННЯ ТА ЧАС
@@ -9,6 +10,16 @@ const rawEx1Name = urlParams.get('ex1');
 const rawEx2Name = urlParams.get('ex2');
 
 const tzOffset = new Date().getTimezoneOffset() * -60;
+
+// ЗАВАНТАЖЕННЯ АПІ КЛЮЧІВ З ПАМ'ЯТІ ПРОГРАМИ
+let apiKeys = {};
+try {
+    const s = localStorage.getItem('cryptoArbSettings');
+    if(s) {
+        const parsed = JSON.parse(s);
+        if (parsed.apiKeys) apiKeys = parsed.apiKeys;
+    }
+} catch(e) {}
 
 function formatExName(name) {
     return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
@@ -54,16 +65,10 @@ const chart = LightweightCharts.createChart(chartContainer, chartOptions);
 const series1 = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350', title: ex1NameFormat });
 const series2 = chart.addCandlestickSeries({ upColor: '#2962FF', downColor: '#FF6D00', borderVisible: false, wickUpColor: '#2962FF', wickDownColor: '#FF6D00', title: ex2NameFormat, priceScaleId: 'left' });
 
-// ==========================================
-// НОВИЙ ГРАФІК СПРЕДУ
-// ==========================================
 const spreadChartContainer = document.getElementById('spread-chart-container');
 const spreadChartOptions = {
     layout: { textColor: '#848e9c', background: { type: 'solid', color: '#0b0e11' } },
-    grid: { 
-        vertLines: { color: '#1e2329', style: 2 }, 
-        horzLines: { color: '#1e2329', style: 2 } 
-    },
+    grid: { vertLines: { color: '#1e2329', style: 2 }, horzLines: { color: '#1e2329', style: 2 } },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: '#2b3139' },
     localization: { timeFormatter: customTimeFormatter },
     rightPriceScale: { borderColor: '#2b3139', autoScale: true },
@@ -71,11 +76,8 @@ const spreadChartOptions = {
 };
 const spreadChart = LightweightCharts.createChart(spreadChartContainer, spreadChartOptions);
 const spreadSeries = spreadChart.addAreaSeries({
-    lineColor: '#8e44ad', 
-    topColor: 'rgba(142, 68, 173, 0.35)',
-    bottomColor: 'rgba(142, 68, 173, 0.0)',
-    lineWidth: 2,
-    priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
+    lineColor: '#8e44ad', topColor: 'rgba(142, 68, 173, 0.35)', bottomColor: 'rgba(142, 68, 173, 0.0)',
+    lineWidth: 2, priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
 });
 
 window.addEventListener('resize', () => { 
@@ -98,16 +100,6 @@ document.addEventListener('mousemove', (e) => {
 });
 document.addEventListener('mouseup', () => { isResizing = false; document.body.style.userSelect = 'auto'; });
 
-window.setColorMode = function(mode) {
-    if (mode === 'solid') {
-        series1.applyOptions({ upColor: '#00d67c', downColor: '#00d67c', wickUpColor: '#00d67c', wickDownColor: '#00d67c' });
-        series2.applyOptions({ upColor: '#2962FF', downColor: '#2962FF', wickUpColor: '#2962FF', wickDownColor: '#2962FF' });
-    } else {
-        series1.applyOptions({ upColor: '#26a69a', downColor: '#ef5350', wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
-        series2.applyOptions({ upColor: '#2962FF', downColor: '#FF6D00', wickUpColor: '#2962FF', wickDownColor: '#FF6D00' });
-    }
-};
-
 let lastCandle1 = null, lastCandle2 = null;
 let currentIntervalMins = 1;
 let currentP1 = null, currentP2 = null;
@@ -116,7 +108,6 @@ function updateLiveSpread() {
     if (currentP1 && currentP2 && currentP1 > 0) {
         let sp = (((currentP2 - currentP1) / currentP1) * 100);
         document.getElementById('header-spread').innerText = sp.toFixed(2) + '%';
-        
         const currentCandleTime = Math.floor(Date.now() / 60000) * 60;
         try { spreadSeries.update({ time: currentCandleTime, value: sp }); } catch(e) {}
     }
@@ -130,10 +121,6 @@ let domConfig = { scale: 100, precision: 'auto', volType: 'USDT' };
 try {
     const saved = localStorage.getItem('domConfig');
     if (saved) domConfig = JSON.parse(saved);
-    document.getElementById('dom-scale').value = domConfig.scale;
-    document.getElementById('dom-scale-val').innerText = domConfig.scale + '%';
-    document.getElementById('dom-precision').value = domConfig.precision;
-    document.getElementById('dom-vol-type').value = domConfig.volType;
 } catch(e) {}
 
 window.updateDomSettings = function() {
@@ -171,15 +158,9 @@ window.changeInterval = async function(mins, btnElement) {
     
     if (currentP1 && currentP2) {
         const ratio = Math.max(currentP1 / currentP2, currentP2 / currentP1);
-        if (ratio < 3) {
-            series2.applyOptions({ priceScaleId: 'right' });
-            chart.priceScale('left').applyOptions({ visible: false });
-        } else {
-            series2.applyOptions({ priceScaleId: 'left' });
-            chart.priceScale('left').applyOptions({ visible: true });
-        }
+        if (ratio < 3) { series2.applyOptions({ priceScaleId: 'right' }); chart.priceScale('left').applyOptions({ visible: false }); } 
+        else { series2.applyOptions({ priceScaleId: 'left' }); chart.priceScale('left').applyOptions({ visible: true }); }
     }
-
     chart.timeScale().fitContent();
     updateLiveSpread();
 };
@@ -192,9 +173,7 @@ async function fetchHistory(exName, symbol, intervalMins) {
     const bInterval = `${intervalMins}m`; const bybInterval = `${intervalMins}`; const bitgetSpotInt = `${intervalMins}min`; const mexcFutInt = `Min${intervalMins}`;
 
     let reqSym = cleanSym;
-    if (isSpot && reqSym.startsWith('1000') && !reqSym.includes('SATS')) {
-        reqSym = reqSym.replace(/^10000?/, '');
-    }
+    if (isSpot && reqSym.startsWith('1000') && !reqSym.includes('SATS')) reqSym = reqSym.replace(/^10000?/, '');
 
     try {
         let url = '';
@@ -224,11 +203,8 @@ async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
     const ex = exName.replace(' Spot', '');
-    
     let reqSym = cleanSym;
-    if (isSpot && reqSym.startsWith('1000') && !reqSym.includes('SATS')) {
-        reqSym = reqSym.replace(/^10000?/, '');
-    }
+    if (isSpot && reqSym.startsWith('1000') && !reqSym.includes('SATS')) reqSym = reqSym.replace(/^10000?/, '');
 
     let allData = [];
     let currentEndTime = Date.now();
@@ -257,31 +233,21 @@ async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
                 else if (ex === 'Bitget') chunk = r.data.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) }));
                 else if (ex === 'MEXC') { if (isSpot) chunk = r.data.map(k => ({ time: Math.floor(k[0]/1000), close: parseFloat(k[4]) })); else if (r.data.data && r.data.data.time) { const d = r.data.data; for(let i=0; i<d.time.length; i++) chunk.push({ time: parseInt(d.time[i]), close: parseFloat(d.close[i]) }); chunk = chunk.slice(-limit); } }
                 break; 
-            } catch(e) {
-                retries--;
-                if(retries > 0) await new Promise(res => setTimeout(res, 1000));
-            }
+            } catch(e) { retries--; if(retries > 0) await new Promise(res => setTimeout(res, 1000)); }
         }
 
         if (!chunk || chunk.length === 0) break;
-        
         chunk.sort((a,b) => a.time - b.time); 
         allData = chunk.concat(allData);
         currentEndTime = (chunk[0].time * 1000) - 1; 
-        
         if (onProgress) onProgress(chunk.length);
         if (allData.length >= totalCandles) break;
-        
         await new Promise(res => setTimeout(res, 250));
     }
     
     const uniqueData = []; let lastTime = 0;
     allData.sort((a,b) => a.time - b.time);
-    for (let d of allData) { 
-        if (d.time > lastTime && !isNaN(d.time) && !isNaN(d.close)) { 
-            uniqueData.push(d); lastTime = d.time; 
-        } 
-    }
+    for (let d of allData) { if (d.time > lastTime && !isNaN(d.time) && !isNaN(d.close)) { uniqueData.push(d); lastTime = d.time; } }
     return uniqueData.slice(-totalCandles);
 }
 
@@ -336,9 +302,7 @@ window.loadSpreadHistory = async function(days, btnElement) {
     } catch(e) {
         console.error("Помилка завантаження історії спреду:", e);
     } finally {
-        setTimeout(() => {
-            if (progContainer) progContainer.style.display = 'none';
-        }, 1000);
+        setTimeout(() => { if (progContainer) progContainer.style.display = 'none'; }, 1000);
     }
 };
 
@@ -366,52 +330,110 @@ function updateLiveCandle(exIndex, price) {
 }
 
 // ==========================================
-// 4.5 ТОРГОВА ПАНЕЛЬ (ЛОГІКА)
+// 4.5 ТОРГОВА ПАНЕЛЬ ТА API ІНТЕГРАЦІЯ
 // ==========================================
-let balanceEx1 = 1000.00; // Фейковий баланс для візуалу
-let balanceEx2 = 1000.00;
+let balanceEx1 = 0; 
+let balanceEx2 = 0;
 let tradeDir1 = 'buy';
 let tradeDir2 = 'buy';
 const isSpot1 = rawEx1Name.endsWith(' Spot');
 const isSpot2 = rawEx2Name.endsWith(' Spot');
 
-function initTradingPanel() {
-    const setPanelUI = (exIndex, isSpot) => {
-        const btnBuy = document.getElementById(`btn-buy-${exIndex}`);
-        const btnSell = document.getElementById(`btn-sell-${exIndex}`);
-        const levCont = document.getElementById(`lev-container-${exIndex}`);
-        if (isSpot) {
-            btnBuy.innerText = 'Купити';
-            btnSell.innerText = 'Продати';
-            levCont.style.display = 'none';
-        } else {
-            btnBuy.innerText = 'Лонг';
-            btnSell.innerText = 'Шорт';
-            levCont.style.display = 'flex';
-        }
-    };
-
-    setPanelUI(1, isSpot1);
-    setPanelUI(2, isSpot2);
+// СТВОРЕННЯ UI ПАНЕЛІ (Заміна HTML через JS для чистоти)
+function injectTradingPanel() {
+    const panelHtml = `
+    <style>
+        .trade-tabs { display: flex; background: #0b0e11; border-radius: 4px; border: 1px solid #3c444f; overflow: hidden; margin-top: 5px; }
+        .trade-tab { flex: 1; padding: 6px; border: none; background: transparent; color: #848e9c; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 0.85em; }
+        .trade-tab.active.green { background: rgba(0, 214, 124, 0.15); color: #00d67c; }
+        .trade-tab.active.red { background: rgba(231, 76, 60, 0.15); color: #e74c3c; }
+        .btn-pct { flex: 1; background: #1e2329; border: 1px solid #3c444f; color: #848e9c; border-radius: 4px; padding: 4px 0; cursor: pointer; font-size: 0.75em; transition: 0.2s; }
+        .btn-pct:hover { background: #2b3139; color: #fff; }
+        input[type=range].trade-slider { -webkit-appearance: none; width: 100%; background: #3c444f; height: 3px; border-radius: 2px; outline: none; margin: 8px 0; }
+        input[type=range].trade-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #3498db; cursor: pointer; }
+        .dark-select { background: #0b0e11; border: none; color: #848e9c; border-left: 1px solid #3c444f; outline: none; cursor: pointer; font-size: 0.85em; padding: 0 5px; }
+        .dark-select option { background: #161a1e; color: #fff; }
+        input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    </style>
+    <div id="trading-panel" style="flex: 1; border-top: 1px solid #2b3139; display: flex; flex-direction: column; background: #161a1e;">
+        <div style="display: flex; flex: 1; min-height: 0;">
+            <!-- Біржа 1 -->
+            <div style="flex: 1; border-right: 1px solid #2b3139; padding: 10px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color:#848e9c; font-size: 0.8em; font-weight:bold;">${isSpot1 ? 'СПОТ' : 'Ф\'ЮЧЕРСИ'} | Баланс:</span>
+                    <span id="bal-ex1" style="color:#fff; font-weight: bold; font-size: 0.85em;">Завантаження...</span>
+                </div>
+                <div class="trade-tabs" id="tabs-dir-1">
+                    <button class="trade-tab active green" id="btn-buy-1" onclick="setTradeDir(1, 'buy')">${isSpot1 ? 'Купити' : 'Лонг'}</button>
+                    <button class="trade-tab red" id="btn-sell-1" onclick="setTradeDir(1, 'sell')">${isSpot1 ? 'Продати' : 'Шорт'}</button>
+                </div>
+                <div id="lev-container-1" style="display:${isSpot1 ? 'none' : 'flex'}; flex-direction: column; gap: 0px; margin-top:2px;">
+                    <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-1" style="color:#fff; font-weight:bold;">10x</span></div>
+                    <input type="range" id="lev-slider-1" class="trade-slider" min="1" max="100" value="10" oninput="document.getElementById('lev-val-1').innerText = this.value + 'x'">
+                </div>
+                <div style="display: flex; background: #0b0e11; border: 1px solid #3c444f; border-radius: 4px; padding: 2px;">
+                    <input type="number" id="trade-amount-1" placeholder="Кількість" style="flex: 1; background: transparent; border: none; color: #fff; padding: 5px; outline: none; min-width: 0; font-size:0.9em;">
+                    <select id="trade-type-1" class="dark-select" onchange="setTradePercent(1, window['lastPct1'] || 0)">
+                        <option value="USDT">USDT</option>
+                        <option value="COIN">COIN</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 5px; justify-content: space-between;">
+                    <button class="btn-pct" onclick="setTradePercent(1, 0.1)">10%</button>
+                    <button class="btn-pct" onclick="setTradePercent(1, 0.25)">25%</button>
+                    <button class="btn-pct" onclick="setTradePercent(1, 0.5)">50%</button>
+                    <button class="btn-pct" onclick="setTradePercent(1, 1)">100%</button>
+                </div>
+            </div>
+            <!-- Біржа 2 -->
+            <div style="flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="color:#848e9c; font-size: 0.8em; font-weight:bold;">${isSpot2 ? 'СПОТ' : 'Ф\'ЮЧЕРСИ'} | Баланс:</span>
+                    <span id="bal-ex2" style="color:#fff; font-weight: bold; font-size: 0.85em;">Завантаження...</span>
+                </div>
+                <div class="trade-tabs" id="tabs-dir-2">
+                    <button class="trade-tab active green" id="btn-buy-2" onclick="setTradeDir(2, 'buy')">${isSpot2 ? 'Купити' : 'Лонг'}</button>
+                    <button class="trade-tab red" id="btn-sell-2" onclick="setTradeDir(2, 'sell')">${isSpot2 ? 'Продати' : 'Шорт'}</button>
+                </div>
+                <div id="lev-container-2" style="display:${isSpot2 ? 'none' : 'flex'}; flex-direction: column; gap: 0px; margin-top:2px;">
+                    <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-2" style="color:#fff; font-weight:bold;">10x</span></div>
+                    <input type="range" id="lev-slider-2" class="trade-slider" min="1" max="100" value="10" oninput="document.getElementById('lev-val-2').innerText = this.value + 'x'">
+                </div>
+                <div style="display: flex; background: #0b0e11; border: 1px solid #3c444f; border-radius: 4px; padding: 2px;">
+                    <input type="number" id="trade-amount-2" placeholder="Кількість" style="flex: 1; background: transparent; border: none; color: #fff; padding: 5px; outline: none; min-width: 0; font-size:0.9em;">
+                    <select id="trade-type-2" class="dark-select" onchange="setTradePercent(2, window['lastPct2'] || 0)">
+                        <option value="USDT">USDT</option>
+                        <option value="COIN">COIN</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 5px; justify-content: space-between;">
+                    <button class="btn-pct" onclick="setTradePercent(2, 0.1)">10%</button>
+                    <button class="btn-pct" onclick="setTradePercent(2, 0.25)">25%</button>
+                    <button class="btn-pct" onclick="setTradePercent(2, 0.5)">50%</button>
+                    <button class="btn-pct" onclick="setTradePercent(2, 1)">100%</button>
+                </div>
+            </div>
+        </div>
+        <div style="padding: 10px; border-top: 1px solid #2b3139; text-align: center;">
+            <button id="btn-execute-all" style="width: 100%; background: #00d67c; color: #000; font-weight: bold; padding: 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 1.05em; transition: 0.2s;" onmouseover="this.style.filter='brightness(1.1)'" onmouseout="this.style.filter='brightness(1)'" onclick="executeDualTrade()">ВІДКРИТИ МАРКЕТ ОРДЕРИ</button>
+        </div>
+    </div>`;
     
-    document.getElementById('bal-ex1').innerText = balanceEx1.toFixed(2) + ' USDT (Demo)';
-    document.getElementById('bal-ex2').innerText = balanceEx2.toFixed(2) + ' USDT (Demo)';
+    // Вставляємо панель замість старого контейнера
+    const obWrapper = document.getElementById('ob-wrapper');
+    if (obWrapper) {
+        obWrapper.insertAdjacentHTML('afterend', panelHtml);
+        obWrapper.style.flex = "2"; 
+    }
 }
 
 window.setTradeDir = function(exIndex, dir) {
     if (exIndex === 1) tradeDir1 = dir;
     else tradeDir2 = dir;
-
     const btnBuy = document.getElementById(`btn-buy-${exIndex}`);
     const btnSell = document.getElementById(`btn-sell-${exIndex}`);
-
-    if (dir === 'buy') {
-        btnBuy.classList.add('active', 'green');
-        btnSell.classList.remove('active', 'red');
-    } else {
-        btnSell.classList.add('active', 'red');
-        btnBuy.classList.remove('active', 'green');
-    }
+    if (dir === 'buy') { btnBuy.classList.add('active', 'green'); btnSell.classList.remove('active', 'red'); } 
+    else { btnSell.classList.add('active', 'red'); btnBuy.classList.remove('active', 'green'); }
 };
 
 window.setTradePercent = function(exIndex, pct) {
@@ -432,40 +454,135 @@ window.setTradePercent = function(exIndex, pct) {
     }
 };
 
-window.executeDualTrade = function() {
+// --- ФУНКЦІЇ ДЛЯ РЕАЛЬНОГО API ---
+function signRequest(paramsStr, secret) {
+    return crypto.createHmac('sha256', secret).update(paramsStr).digest('hex');
+}
+
+async function fetchRealBalance(exName, exIndex) {
+    const isSpot = exName.endsWith(' Spot');
+    const baseEx = exName.replace(' Spot', '');
+    const keys = apiKeys[baseEx];
+    
+    const balEl = document.getElementById(`bal-ex${exIndex}`);
+
+    if (!keys || !keys.key || !keys.secret) {
+        balEl.innerText = 'API не підключено';
+        balEl.style.color = '#e74c3c';
+        return;
+    }
+
+    try {
+        const ts = Date.now();
+        let bal = 0;
+
+        if (baseEx === 'Binance') {
+            const endpoint = isSpot ? '/api/v3/account' : '/fapi/v2/balance';
+            const url = isSpot ? 'https://api.binance.com' : 'https://fapi.binance.com';
+            const q = `timestamp=${ts}&recvWindow=5000`;
+            const sig = signRequest(q, keys.secret);
+            const r = await axios.get(`${url}${endpoint}?${q}&signature=${sig}`, { headers: { 'X-MBX-APIKEY': keys.key } });
+            
+            if (isSpot) {
+                const u = r.data.balances.find(b => b.asset === 'USDT');
+                bal = u ? parseFloat(u.free) : 0;
+            } else {
+                const u = r.data.find(b => b.asset === 'USDT');
+                bal = u ? parseFloat(u.availableBalance) : 0;
+            }
+        } 
+        else if (baseEx === 'MEXC') {
+            const endpoint = isSpot ? '/api/v3/account' : '/api/v1/private/account/asset/USDT';
+            const url = isSpot ? 'https://api.mexc.com' : 'https://contract.mexc.com';
+            const q = `timestamp=${ts}&recvWindow=5000`;
+            const sig = signRequest(q, keys.secret);
+            const r = await axios.get(`${url}${endpoint}?${q}&signature=${sig}`, { headers: { 'X-MEXC-APIKEY': keys.key } });
+            
+            if (isSpot) {
+                const u = r.data.balances.find(b => b.asset === 'USDT');
+                bal = u ? parseFloat(u.free) : 0;
+            } else {
+                bal = r.data.data ? parseFloat(r.data.data.availableBalance) : 0;
+            }
+        }
+        else if (baseEx === 'Bybit') {
+            const accType = isSpot ? 'UNIFIED' : 'CONTRACT';
+            const q = `accountType=${accType}&coin=USDT`;
+            const signStr = ts + keys.key + '5000' + q;
+            const sig = signRequest(signStr, keys.secret);
+            const r = await axios.get(`https://api.bybit.com/v5/account/wallet-balance?${q}`, {
+                headers: { 'X-BAPI-API-KEY': keys.key, 'X-BAPI-TIMESTAMP': ts, 'X-BAPI-RECV-WINDOW': '5000', 'X-BAPI-SIGN': sig }
+            });
+            bal = r.data.result.list[0] && r.data.result.list[0].coin[0] ? parseFloat(r.data.result.list[0].coin[0].availableToWithdraw) : 0;
+        }
+
+        if (exIndex === 1) balanceEx1 = bal; else balanceEx2 = bal;
+        balEl.innerText = bal.toFixed(2) + ' USDT';
+        balEl.style.color = '#fff';
+
+    } catch (err) {
+        balEl.innerText = 'Помилка API';
+        balEl.style.color = '#e74c3c';
+        console.error(`Balance API Error ${baseEx}:`, err);
+    }
+}
+
+async function placeMarketOrder(exName, symbolInfo, direction, amount, type, leverage) {
+    const isSpot = exName.endsWith(' Spot');
+    const baseEx = exName.replace(' Spot', '');
+    const keys = apiKeys[baseEx];
+
+    if (!keys || !keys.key || !keys.secret) throw new Error(`Немає API ключів для ${baseEx}`);
+    
+    // Тут буде логіка реального відправлення ордера.
+    // Наразі для безпеки ми імітуємо затримку API (щоб ти міг протестувати UI)
+    await new Promise(r => setTimeout(r, 500));
+    
+    console.log(`[API MOCK] Реальний запит пішов би на ${exName}: Pair=${symbolInfo}, Dir=${direction}, Qty=${amount} ${type}, Lev=${leverage}x`);
+    return { success: true, msg: 'Executed' };
+}
+
+window.executeDualTrade = async function() {
     const btn = document.getElementById('btn-execute-all');
+    if (btn.disabled) return;
+    
     const origText = btn.innerText;
-    btn.innerText = 'Відправка...';
-    btn.style.background = '#f1c40f'; // Жовтий в процесі
+    btn.innerText = 'Відправка ордерів...';
+    btn.style.background = '#f1c40f'; 
+    btn.disabled = true;
 
-    const data1 = {
-        exchange: rawEx1Name,
-        symbol: symbol,
-        direction: tradeDir1,
-        amount: parseFloat(document.getElementById('trade-amount-1').value),
-        type: document.getElementById('trade-type-1').value,
-        leverage: isSpot1 ? 1 : parseInt(document.getElementById('lev-slider-1').value)
-    };
+    try {
+        const amt1 = parseFloat(document.getElementById('trade-amount-1').value);
+        const amt2 = parseFloat(document.getElementById('trade-amount-2').value);
+        
+        if (isNaN(amt1) || isNaN(amt2) || amt1 <= 0 || amt2 <= 0) {
+            throw new Error("Введіть коректну кількість для обох бірж!");
+        }
 
-    const data2 = {
-        exchange: rawEx2Name,
-        symbol: symbol,
-        direction: tradeDir2,
-        amount: parseFloat(document.getElementById('trade-amount-2').value),
-        type: document.getElementById('trade-type-2').value,
-        leverage: isSpot2 ? 1 : parseInt(document.getElementById('lev-slider-2').value)
-    };
+        // Паралельно відправляємо два запити на біржі
+        await Promise.all([
+            placeMarketOrder(rawEx1Name, symbol, tradeDir1, amt1, document.getElementById('trade-type-1').value, isSpot1 ? 1 : parseInt(document.getElementById('lev-slider-1').value)),
+            placeMarketOrder(rawEx2Name, symbol, tradeDir2, amt2, document.getElementById('trade-type-2').value, isSpot2 ? 1 : parseInt(document.getElementById('lev-slider-2').value))
+        ]);
 
-    console.log("EXECUTE MARKET ORDERS:", data1, data2);
-
-    setTimeout(() => {
-        btn.innerText = 'Успішно відправлено!';
+        btn.innerText = 'Успішно відкрито!';
         btn.style.background = '#27ae60';
+        
+        // Оновлюємо баланси після покупки
+        fetchRealBalance(rawEx1Name, 1);
+        fetchRealBalance(rawEx2Name, 2);
+
+    } catch (e) {
+        btn.innerText = 'Помилка: ' + e.message;
+        btn.style.background = '#e74c3c';
+        setTimeout(() => alert(e.message), 100);
+    } finally {
         setTimeout(() => {
             btn.innerText = origText;
             btn.style.background = '#00d67c';
-        }, 2000);
-    }, 800);
+            btn.disabled = false;
+        }, 2500);
+    }
 };
 
 // ==========================================
@@ -915,8 +1032,10 @@ async function initLive() {
         fetchMexcMultiplier(2, rawEx2Name, symbol)
     ]);
     
-    // Ініціалізація торгового інтерфейсу
-    initTradingPanel();
+    injectTradingPanel();
+    
+    fetchRealBalance(rawEx1Name, 1);
+    fetchRealBalance(rawEx2Name, 2);
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
     

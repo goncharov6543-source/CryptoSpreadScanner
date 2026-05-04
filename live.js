@@ -1,12 +1,14 @@
 const axios = require('axios');
 
 // ==========================================
-// 1. БАЗОВІ НАЛАШТУВАННЯ
+// 1. БАЗОВІ НАЛАШТУВАННЯ ТА ЧАС
 // ==========================================
 const urlParams = new URLSearchParams(window.location.search);
 const symbol = urlParams.get('symbol');
 const rawEx1Name = urlParams.get('ex1');
 const rawEx2Name = urlParams.get('ex2');
+
+const tzOffset = new Date().getTimezoneOffset() * -60;
 
 function formatExName(name) {
     return name.endsWith(' Spot') ? name.replace(' Spot', ' (Spot)') : name + ' (Fut)';
@@ -29,7 +31,6 @@ function formatPrice(p) {
     return num.toFixed(4).replace(/\.?0+$/, '');
 }
 
-// Нативна функція локалізації часу для графіків
 const customTimeFormatter = (timestamp) => {
     const d = new Date(timestamp * 1000);
     return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
@@ -77,7 +78,6 @@ const spreadSeries = spreadChart.addAreaSeries({
     priceFormat: { type: 'custom', minMove: 0.01, formatter: p => p.toFixed(2) + '%' }
 });
 
-// Адаптація розмірів
 window.addEventListener('resize', () => { 
     chart.resize(chartContainer.clientWidth, chartContainer.clientHeight); 
     spreadChart.resize(spreadChartContainer.clientWidth, spreadChartContainer.clientHeight);
@@ -220,7 +220,6 @@ async function fetchHistory(exName, symbol, intervalMins) {
     } catch(e) { return []; }
 }
 
-// ЧАНКОВИЙ ЗАВАНТАЖУВАЧ З РЕТРАЯМИ
 async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     const isSpot = exName.endsWith(' Spot');
@@ -286,7 +285,6 @@ async function getKlineDataChunked(exName, symbol, totalCandles, onProgress) {
     return uniqueData.slice(-totalCandles);
 }
 
-// ЗАВАНТАЖЕННЯ ІСТОРІЇ СПРЕДУ
 window.loadSpreadHistory = async function(days, btnElement) {
     if (btnElement) {
         document.querySelectorAll('.btn-spread-time').forEach(b => b.classList.remove('active'));
@@ -333,7 +331,7 @@ window.loadSpreadHistory = async function(days, btnElement) {
 
         spreadData.sort((a, b) => a.time - b.time);
         spreadSeries.setData(spreadData);
-        spreadChart.timeScale().fitContent(); // Авто-масштаб на всю ширину
+        spreadChart.timeScale().fitContent();
         
     } catch(e) {
         console.error("Помилка завантаження історії спреду:", e);
@@ -366,6 +364,109 @@ function updateLiveCandle(exIndex, price) {
     if (exIndex === 1) { lastCandle1 = lastCandle; currentP1 = price; } else { lastCandle2 = lastCandle; currentP2 = price; }
     updateLiveSpread(); try { series.update(lastCandle); } catch(e) {}
 }
+
+// ==========================================
+// 4.5 ТОРГОВА ПАНЕЛЬ (ЛОГІКА)
+// ==========================================
+let balanceEx1 = 1000.00; // Фейковий баланс для візуалу
+let balanceEx2 = 1000.00;
+let tradeDir1 = 'buy';
+let tradeDir2 = 'buy';
+const isSpot1 = rawEx1Name.endsWith(' Spot');
+const isSpot2 = rawEx2Name.endsWith(' Spot');
+
+function initTradingPanel() {
+    const setPanelUI = (exIndex, isSpot) => {
+        const btnBuy = document.getElementById(`btn-buy-${exIndex}`);
+        const btnSell = document.getElementById(`btn-sell-${exIndex}`);
+        const levCont = document.getElementById(`lev-container-${exIndex}`);
+        if (isSpot) {
+            btnBuy.innerText = 'Купити';
+            btnSell.innerText = 'Продати';
+            levCont.style.display = 'none';
+        } else {
+            btnBuy.innerText = 'Лонг';
+            btnSell.innerText = 'Шорт';
+            levCont.style.display = 'flex';
+        }
+    };
+
+    setPanelUI(1, isSpot1);
+    setPanelUI(2, isSpot2);
+    
+    document.getElementById('bal-ex1').innerText = balanceEx1.toFixed(2) + ' USDT (Demo)';
+    document.getElementById('bal-ex2').innerText = balanceEx2.toFixed(2) + ' USDT (Demo)';
+}
+
+window.setTradeDir = function(exIndex, dir) {
+    if (exIndex === 1) tradeDir1 = dir;
+    else tradeDir2 = dir;
+
+    const btnBuy = document.getElementById(`btn-buy-${exIndex}`);
+    const btnSell = document.getElementById(`btn-sell-${exIndex}`);
+
+    if (dir === 'buy') {
+        btnBuy.classList.add('active', 'green');
+        btnSell.classList.remove('active', 'red');
+    } else {
+        btnSell.classList.add('active', 'red');
+        btnBuy.classList.remove('active', 'green');
+    }
+};
+
+window.setTradePercent = function(exIndex, pct) {
+    window[`lastPct${exIndex}`] = pct; 
+    if (pct === 0) return;
+    
+    const bal = exIndex === 1 ? balanceEx1 : balanceEx2;
+    const type = document.getElementById(`trade-type-${exIndex}`).value;
+    const input = document.getElementById(`trade-amount-${exIndex}`);
+    const currentPrice = exIndex === 1 ? currentP1 : currentP2;
+
+    if (!currentPrice || currentPrice <= 0) return;
+
+    if (type === 'USDT') {
+        input.value = (bal * pct).toFixed(2);
+    } else {
+        input.value = ((bal * pct) / currentPrice).toFixed(4); 
+    }
+};
+
+window.executeDualTrade = function() {
+    const btn = document.getElementById('btn-execute-all');
+    const origText = btn.innerText;
+    btn.innerText = 'Відправка...';
+    btn.style.background = '#f1c40f'; // Жовтий в процесі
+
+    const data1 = {
+        exchange: rawEx1Name,
+        symbol: symbol,
+        direction: tradeDir1,
+        amount: parseFloat(document.getElementById('trade-amount-1').value),
+        type: document.getElementById('trade-type-1').value,
+        leverage: isSpot1 ? 1 : parseInt(document.getElementById('lev-slider-1').value)
+    };
+
+    const data2 = {
+        exchange: rawEx2Name,
+        symbol: symbol,
+        direction: tradeDir2,
+        amount: parseFloat(document.getElementById('trade-amount-2').value),
+        type: document.getElementById('trade-type-2').value,
+        leverage: isSpot2 ? 1 : parseInt(document.getElementById('lev-slider-2').value)
+    };
+
+    console.log("EXECUTE MARKET ORDERS:", data1, data2);
+
+    setTimeout(() => {
+        btn.innerText = 'Успішно відправлено!';
+        btn.style.background = '#27ae60';
+        setTimeout(() => {
+            btn.innerText = origText;
+            btn.style.background = '#00d67c';
+        }, 2000);
+    }, 800);
+};
 
 // ==========================================
 // 5. ДВИЖОК СТАКАНА ТА АГРЕГАЦІЯ
@@ -813,6 +914,9 @@ async function initLive() {
         fetchMexcMultiplier(1, rawEx1Name, symbol),
         fetchMexcMultiplier(2, rawEx2Name, symbol)
     ]);
+    
+    // Ініціалізація торгового інтерфейсу
+    initTradingPanel();
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
     

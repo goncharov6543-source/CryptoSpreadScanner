@@ -150,13 +150,13 @@
             <!-- ПАНЕЛЬ НАЛАШТУВАНЬ DOM -->
             <div class="dom-settings">
                 <label>Об'єм:
-                    <select id="dom-vol-type" onchange="updateDomSettings()">
+                    <select id="dom-vol-type" onchange="updateDomSettings()" style="background: #0b0e11; color: #848e9c; border: 1px solid #3c444f; border-radius: 4px; outline: none; padding: 2px 5px;">
                         <option value="USDT">В USDT ($)</option>
                         <option value="COIN">В Монетах</option>
                     </select>
                 </label>
                 <label>Групування: 
-                    <select id="dom-precision" onchange="updateDomSettings()">
+                    <select id="dom-precision" onchange="updateDomSettings()" style="background: #0b0e11; color: #848e9c; border: 1px solid #3c444f; border-radius: 4px; outline: none; padding: 2px 5px;">
                         <option value="auto">Auto</option>
                         <option value="10">10</option>
                         <option value="1">1</option>
@@ -200,28 +200,40 @@
             </div>
 
             <!-- ТОРГОВА ПАНЕЛЬ (1/3 Висоти) -->
+            <style>
+                .trade-tabs { display: flex; background: #0b0e11; border-radius: 4px; border: 1px solid #3c444f; overflow: hidden; margin-top: 5px; }
+                .trade-tab { flex: 1; padding: 6px; border: none; background: transparent; color: #848e9c; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 0.85em; }
+                .trade-tab.active.green { background: rgba(0, 214, 124, 0.15); color: #00d67c; }
+                .trade-tab.active.red { background: rgba(231, 76, 60, 0.15); color: #e74c3c; }
+                .btn-pct { flex: 1; background: #1e2329; border: 1px solid #3c444f; color: #848e9c; border-radius: 4px; padding: 4px 0; cursor: pointer; font-size: 0.75em; transition: 0.2s; }
+                .btn-pct:hover { background: #2b3139; color: #fff; }
+                input[type=range].trade-slider { appearance: none; -webkit-appearance: none; width: 100%; background: #3c444f; height: 3px; border-radius: 2px; outline: none; margin: 8px 0; }
+                input[type=range].trade-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #3498db; cursor: pointer; }
+                .dark-select { background: transparent; border: none; color: #848e9c; border-left: 1px solid #3c444f; outline: none; cursor: pointer; font-size: 0.85em; padding: 0 5px; }
+                .dark-select option { background: #161a1e; color: #fff; }
+                input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+            </style>
+            
             <div id="trading-panel" style="flex: 1; border-top: 1px solid #2b3139; display: flex; flex-direction: column; background: #161a1e;">
                 <div style="display: flex; flex: 1; min-height: 0;">
                     
                     <!-- Блок для Біржі 1 -->
                     <div style="flex: 1; border-right: 1px solid #2b3139; padding: 10px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="color:#848e9c; font-size: 0.8em;">Баланс:</span>
-                            <span id="bal-ex1" style="color:#fff; font-weight: bold; font-size: 0.85em;">~ USDT</span>
+                            <span id="panel-title-1" style="color:#848e9c; font-size: 0.8em; font-weight:bold;">Тип | Баланс:</span>
+                            <span id="bal-ex1" style="color:#fff; font-weight: bold; font-size: 0.85em;">Завантаження...</span>
                         </div>
                         <div class="trade-tabs" id="tabs-dir-1">
                             <button class="trade-tab active green" id="btn-buy-1" onclick="setTradeDir(1, 'buy')">Купити</button>
                             <button class="trade-tab red" id="btn-sell-1" onclick="setTradeDir(1, 'sell')">Продати</button>
                         </div>
-                        <div id="lev-container-1" style="display:none; flex-direction: column; gap: 2px;">
-                            <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;">
-                                <span>Плече:</span><span id="lev-val-1" style="color:#fff; font-weight:bold;">10x</span>
-                            </div>
+                        <div id="lev-container-1" style="display:none; flex-direction: column; gap: 0px; margin-top:2px;">
+                            <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-1" style="color:#fff; font-weight:bold;">10x</span></div>
                             <input type="range" id="lev-slider-1" class="trade-slider" min="1" max="100" value="10" oninput="document.getElementById('lev-val-1').innerText = this.value + 'x'">
                         </div>
                         <div style="display: flex; background: #0b0e11; border: 1px solid #3c444f; border-radius: 4px; padding: 2px;">
                             <input type="number" id="trade-amount-1" placeholder="Кількість" style="flex: 1; background: transparent; border: none; color: #fff; padding: 5px; outline: none; min-width: 0; font-size:0.9em;">
-                            <select id="trade-type-1" style="background: transparent; border: none; color: #848e9c; border-left: 1px solid #3c444f; outline: none; cursor: pointer; font-size:0.85em;" onchange="setTradePercent(1, window['lastPct1'] || 0)">
+                            <select id="trade-type-1" class="dark-select" onchange="setTradePercent(1, window['lastPct1'] || 0)">
                                 <option value="USDT">USDT</option>
                                 <option value="COIN">COIN</option>
                             </select>
@@ -237,22 +249,20 @@
                     <!-- Блок для Біржі 2 -->
                     <div style="flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="color:#848e9c; font-size: 0.8em;">Баланс:</span>
-                            <span id="bal-ex2" style="color:#fff; font-weight: bold; font-size: 0.85em;">~ USDT</span>
+                            <span id="panel-title-2" style="color:#848e9c; font-size: 0.8em; font-weight:bold;">Тип | Баланс:</span>
+                            <span id="bal-ex2" style="color:#fff; font-weight: bold; font-size: 0.85em;">Завантаження...</span>
                         </div>
                         <div class="trade-tabs" id="tabs-dir-2">
                             <button class="trade-tab active green" id="btn-buy-2" onclick="setTradeDir(2, 'buy')">Купити</button>
                             <button class="trade-tab red" id="btn-sell-2" onclick="setTradeDir(2, 'sell')">Продати</button>
                         </div>
-                        <div id="lev-container-2" style="display:none; flex-direction: column; gap: 2px;">
-                            <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;">
-                                <span>Плече:</span><span id="lev-val-2" style="color:#fff; font-weight:bold;">10x</span>
-                            </div>
+                        <div id="lev-container-2" style="display:none; flex-direction: column; gap: 0px; margin-top:2px;">
+                            <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-2" style="color:#fff; font-weight:bold;">10x</span></div>
                             <input type="range" id="lev-slider-2" class="trade-slider" min="1" max="100" value="10" oninput="document.getElementById('lev-val-2').innerText = this.value + 'x'">
                         </div>
                         <div style="display: flex; background: #0b0e11; border: 1px solid #3c444f; border-radius: 4px; padding: 2px;">
                             <input type="number" id="trade-amount-2" placeholder="Кількість" style="flex: 1; background: transparent; border: none; color: #fff; padding: 5px; outline: none; min-width: 0; font-size:0.9em;">
-                            <select id="trade-type-2" style="background: transparent; border: none; color: #848e9c; border-left: 1px solid #3c444f; outline: none; cursor: pointer; font-size:0.85em;" onchange="setTradePercent(2, window['lastPct2'] || 0)">
+                            <select id="trade-type-2" class="dark-select" onchange="setTradePercent(2, window['lastPct2'] || 0)">
                                 <option value="USDT">USDT</option>
                                 <option value="COIN">COIN</option>
                             </select>

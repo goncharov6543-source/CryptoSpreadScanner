@@ -806,7 +806,7 @@ async function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Gate.io Spot') wsUrl = 'wss://api.gateio.ws/ws/v4/';
     else if (exName === 'MEXC') wsUrl = 'wss://contract.mexc.com/edge';
     else if (exName === 'MEXC Spot') {
-        wsUrl = 'wss://wbs-api.mexc.com/ws'; 
+        wsUrl = 'wss://wbs.mexc.com/ws'; 
         const lKey = await getMexcListenKey();
         if (lKey) {
             wsUrl += `?listenKey=${lKey}`;
@@ -853,10 +853,17 @@ async function connectExchange(exIndex, exName, symbol) {
         } else if (exName === 'MEXC Spot') {
             const spotSubs = [
                 `spot@public.deals.v3.api@${subSym}`,
-                `spot@public.limit.depth.v3.api@${subSym}@5`, 
+                `spot@public.increase.depth.v3.api@${subSym}`, 
                 `spot@public.bookTicker.v3.api@${subSym}` 
             ];
             
+            axios.get(`https://api.mexc.com/api/v3/depth?symbol=${subSym}&limit=20`)
+                .then(res => {
+                    if (res.data && res.data.asks) {
+                        updateObState(exIndex, 'snapshot', res.data.asks, res.data.bids);
+                    }
+                }).catch(e => {});
+
             spotSubs.forEach((subChannel, i) => {
                 setTimeout(() => {
                     if (ws.readyState === WebSocket.OPEN) {

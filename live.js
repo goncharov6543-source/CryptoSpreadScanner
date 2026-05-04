@@ -129,7 +129,22 @@ let domConfig = { scale: 100, precision: 'auto', volType: 'USDT' };
 
 try {
     const saved = localStorage.getItem('domConfig');
-    if (saved) domConfig = JSON.parse(saved);
+    if (saved) {
+        domConfig = JSON.parse(saved);
+        setTimeout(() => {
+            const scaleEl = document.getElementById('dom-scale');
+            if (scaleEl) scaleEl.value = domConfig.scale;
+            
+            const scaleValEl = document.getElementById('dom-scale-val');
+            if (scaleValEl) scaleValEl.innerText = domConfig.scale + '%';
+            
+            const precEl = document.getElementById('dom-precision');
+            if (precEl) precEl.value = domConfig.precision;
+            
+            const volEl = document.getElementById('dom-vol-type');
+            if (volEl) volEl.value = domConfig.volType;
+        }, 100);
+    }
 } catch(e) {}
 
 window.updateDomSettings = function() {
@@ -423,6 +438,19 @@ window.setTradeDir = function(exIndex, dir) {
     const btnSell = document.getElementById(`btn-sell-${exIndex}`);
     if (dir === 'buy') { btnBuy.classList.add('active', 'green'); btnSell.classList.remove('active', 'red'); } 
     else { btnSell.classList.add('active', 'red'); btnBuy.classList.remove('active', 'green'); }
+};
+
+window.setTopTab = function(exIndex, dir) {
+    const btnBuy = document.getElementById(`btn-top-buy-${exIndex}`);
+    const btnSell = document.getElementById(`btn-top-sell-${exIndex}`);
+    if (!btnBuy || !btnSell) return;
+    if (dir === 'buy') { 
+        btnBuy.classList.add('active', 'green'); 
+        btnSell.classList.remove('active', 'red'); 
+    } else { 
+        btnSell.classList.add('active', 'red'); 
+        btnBuy.classList.remove('active', 'green'); 
+    }
 };
 
 window.setTradePercent = function(exIndex, pct) {
@@ -962,6 +990,16 @@ async function initLive() {
     updateLiveBalances(); 
     
     await window.changeInterval(1, document.getElementById('btn-1m'));
+    
+    if (currentP1 && currentP2) {
+        if (currentP1 < currentP2) {
+            setTradeDir(1, 'buy');
+            setTradeDir(2, 'sell');
+        } else {
+            setTradeDir(1, 'sell');
+            setTradeDir(2, 'buy');
+        }
+    }
     
     window.loadSpreadHistory(0.5, document.querySelector('.btn-spread-time.active'));
     

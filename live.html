@@ -224,6 +224,12 @@
                     
                     <!-- Блок для Біржі 1 -->
                     <div style="flex: 1; border-right: 1px solid #2b3139; padding: 10px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+                        <!-- НОВІ КНОПКИ ПОКУПКА / ПРОДАЖ -->
+                        <div class="trade-tabs" id="tabs-top-1" style="margin-bottom: 2px;">
+                            <button class="trade-tab active green" id="btn-top-buy-1" onclick="setTopTab(1, 'buy')">Покупка</button>
+                            <button class="trade-tab red" id="btn-top-sell-1" onclick="setTopTab(1, 'sell')">Продаж</button>
+                        </div>
+                        
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span id="panel-title-1" style="color:#848e9c; font-size: 0.8em; font-weight:bold;">Тип | Баланс:</span>
                             <span id="bal-ex1" style="color:#fff; font-weight: bold; font-size: 0.85em;">Завантаження...</span>
@@ -232,6 +238,7 @@
                             <button class="trade-tab active green" id="btn-buy-1" onclick="setTradeDir(1, 'buy')">Купити</button>
                             <button class="trade-tab red" id="btn-sell-1" onclick="setTradeDir(1, 'sell')">Продати</button>
                         </div>
+                        <!-- ... решта коду блоку 1 залишається без змін ... -->
                         <div id="lev-container-1" style="display:none; flex-direction: column; gap: 0px; margin-top:2px;">
                             <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-1" style="color:#fff; font-weight:bold;">10x</span></div>
                             <input type="range" id="lev-slider-1" class="trade-slider" min="1" max="100" value="10" oninput="updateSlider(this, 1)">
@@ -254,6 +261,12 @@
                     
                     <!-- Блок для Біржі 2 -->
                     <div style="flex: 1; padding: 10px; display: flex; flex-direction: column; gap: 8px; justify-content: center;">
+                        <!-- НОВІ КНОПКИ ПОКУПКА / ПРОДАЖ -->
+                        <div class="trade-tabs" id="tabs-top-2" style="margin-bottom: 2px;">
+                            <button class="trade-tab active green" id="btn-top-buy-2" onclick="setTopTab(2, 'buy')">Покупка</button>
+                            <button class="trade-tab red" id="btn-top-sell-2" onclick="setTopTab(2, 'sell')">Продаж</button>
+                        </div>
+
                         <div style="display: flex; justify-content: space-between; align-items: center;">
                             <span id="panel-title-2" style="color:#848e9c; font-size: 0.8em; font-weight:bold;">Тип | Баланс:</span>
                             <span id="bal-ex2" style="color:#fff; font-weight: bold; font-size: 0.85em;">Завантаження...</span>
@@ -262,6 +275,7 @@
                             <button class="trade-tab active green" id="btn-buy-2" onclick="setTradeDir(2, 'buy')">Купити</button>
                             <button class="trade-tab red" id="btn-sell-2" onclick="setTradeDir(2, 'sell')">Продати</button>
                         </div>
+                        <!-- ... решта коду блоку 2 залишається без змін ... -->
                         <div id="lev-container-2" style="display:none; flex-direction: column; gap: 0px; margin-top:2px;">
                             <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-2" style="color:#fff; font-weight:bold;">10x</span></div>
                             <input type="range" id="lev-slider-2" class="trade-slider" min="1" max="100" value="10" oninput="updateSlider(this, 2)">

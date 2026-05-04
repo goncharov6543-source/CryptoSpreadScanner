@@ -207,11 +207,16 @@
                 .trade-tab.active.red { background: rgba(231, 76, 60, 0.15); color: #e74c3c; }
                 .btn-pct { flex: 1; background: #1e2329; border: 1px solid #3c444f; color: #848e9c; border-radius: 4px; padding: 4px 0; cursor: pointer; font-size: 0.75em; transition: 0.2s; }
                 .btn-pct:hover { background: #2b3139; color: #fff; }
-                input[type=range].trade-slider { appearance: none; -webkit-appearance: none; width: 100%; background: #3c444f; height: 3px; border-radius: 2px; outline: none; margin: 8px 0; }
-                input[type=range].trade-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #3498db; cursor: pointer; }
+                
+                /* НОВИЙ ДИЗАЙН ПОВЗУНКА ПЛЕЧА */
+                input[type=range].trade-slider { appearance: none; -webkit-appearance: none; width: 100%; height: 3px; border-radius: 2px; outline: none; margin: 10px 0 5px 0; background: #2b3139; }
+                input[type=range].trade-slider::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #0b0e11; border: 3px solid #fff; cursor: pointer; margin-top: -5.5px; }
+                input[type=range].trade-slider::-webkit-slider-runnable-track { width: 100%; height: 3px; cursor: pointer; background: transparent; border: none; }
+                .slider-labels { display: flex; justify-content: space-between; font-size: 0.7em; color: #848e9c; padding: 0 2px; }
+                
                 .dark-select { background: transparent; border: none; color: #848e9c; border-left: 1px solid #3c444f; outline: none; cursor: pointer; font-size: 0.85em; padding: 0 5px; }
                 .dark-select option { background: #161a1e; color: #fff; }
-                input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+                input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { appearance: none; -webkit-appearance: none; margin: 0; }
             </style>
             
             <div id="trading-panel" style="flex: 1; border-top: 1px solid #2b3139; display: flex; flex-direction: column; background: #161a1e;">
@@ -229,7 +234,8 @@
                         </div>
                         <div id="lev-container-1" style="display:none; flex-direction: column; gap: 0px; margin-top:2px;">
                             <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-1" style="color:#fff; font-weight:bold;">10x</span></div>
-                            <input type="range" id="lev-slider-1" class="trade-slider" min="1" max="100" value="10" oninput="document.getElementById('lev-val-1').innerText = this.value + 'x'">
+                            <input type="range" id="lev-slider-1" class="trade-slider" min="1" max="100" value="10" oninput="updateSlider(this, 1)">
+                            <div class="slider-labels"><span>1x</span><span>25x</span><span>50x</span><span>75x</span><span>100x</span></div>
                         </div>
                         <div style="display: flex; background: #0b0e11; border: 1px solid #3c444f; border-radius: 4px; padding: 2px;">
                             <input type="number" id="trade-amount-1" placeholder="Кількість" style="flex: 1; background: transparent; border: none; color: #fff; padding: 5px; outline: none; min-width: 0; font-size:0.9em;">
@@ -258,7 +264,8 @@
                         </div>
                         <div id="lev-container-2" style="display:none; flex-direction: column; gap: 0px; margin-top:2px;">
                             <div style="display:flex; justify-content:space-between; font-size: 0.75em; color:#848e9c;"><span>Плече:</span><span id="lev-val-2" style="color:#fff; font-weight:bold;">10x</span></div>
-                            <input type="range" id="lev-slider-2" class="trade-slider" min="1" max="100" value="10" oninput="document.getElementById('lev-val-2').innerText = this.value + 'x'">
+                            <input type="range" id="lev-slider-2" class="trade-slider" min="1" max="100" value="10" oninput="updateSlider(this, 2)">
+                            <div class="slider-labels"><span>1x</span><span>25x</span><span>50x</span><span>75x</span><span>100x</span></div>
                         </div>
                         <div style="display: flex; background: #0b0e11; border: 1px solid #3c444f; border-radius: 4px; padding: 2px;">
                             <input type="number" id="trade-amount-2" placeholder="Кількість" style="flex: 1; background: transparent; border: none; color: #fff; padding: 5px; outline: none; min-width: 0; font-size:0.9em;">

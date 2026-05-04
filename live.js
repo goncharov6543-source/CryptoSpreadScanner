@@ -1,5 +1,5 @@
 const axios = require('axios');
-const { fetchBalances } = require('./connections.js'); // ІМПОРТУЄМО ГОТОВУ ЛОГІКУ АПІ
+const { fetchBalances } = require('./connections.js'); 
 
 // ==========================================
 // 1. БАЗОВІ НАЛАШТУВАННЯ ТА ЧАС
@@ -339,7 +339,7 @@ function updateLiveCandle(exIndex, price) {
 }
 
 // ==========================================
-// 4.5 ТОРГОВА ПАНЕЛЬ ТА БАЛАНСИ ЧЕРЕЗ CONNECTIONS.JS
+// 4.5 ТОРГОВА ПАНЕЛЬ ТА БАЛАНСИ
 // ==========================================
 let balanceEx1 = 0; 
 let balanceEx2 = 0;
@@ -347,6 +347,12 @@ let tradeDir1 = 'buy';
 let tradeDir2 = 'buy';
 const isSpot1 = rawEx1Name.endsWith(' Spot');
 const isSpot2 = rawEx2Name.endsWith(' Spot');
+
+window.updateSlider = function(el, index) {
+    document.getElementById(`lev-val-${index}`).innerText = el.value + 'x';
+    const pct = ((el.value - el.min) / (el.max - el.min)) * 100;
+    el.style.background = `linear-gradient(to right, #fff ${pct}%, #2b3139 ${pct}%)`;
+};
 
 function initTradingPanel() {
     const setPanelUI = (exIndex, isSpot) => {
@@ -358,13 +364,16 @@ function initTradingPanel() {
         if (titleEl) titleEl.innerText = `${isSpot ? 'СПОТ' : 'Ф\'ЮЧЕРСИ'} | Баланс:`;
 
         if (isSpot) {
-            btnBuy.innerText = 'Купити';
-            btnSell.innerText = 'Продати';
-            levCont.style.display = 'none';
+            if (btnBuy) btnBuy.innerText = 'Купити';
+            if (btnSell) btnSell.innerText = 'Продати';
+            if (levCont) levCont.style.display = 'none';
         } else {
-            btnBuy.innerText = 'Лонг';
-            btnSell.innerText = 'Шорт';
-            levCont.style.display = 'flex';
+            if (btnBuy) btnBuy.innerText = 'Лонг';
+            if (btnSell) btnSell.innerText = 'Шорт';
+            if (levCont) levCont.style.display = 'flex';
+            
+            const levSlider = document.getElementById(`lev-slider-${exIndex}`);
+            if(levSlider) updateSlider(levSlider, exIndex);
         }
     };
 
@@ -372,39 +381,30 @@ function initTradingPanel() {
     setPanelUI(2, isSpot2);
 }
 
-// Функція для підтягування балансу використовуючи вже готову логіку з твого connections.js
 async function updateLiveBalances() {
     const bal1El = document.getElementById('bal-ex1');
     const bal2El = document.getElementById('bal-ex2');
 
     if (!apiKeys || Object.keys(apiKeys).length === 0) {
-        bal1El.innerText = 'API не підключено';
-        bal2El.innerText = 'API не підключено';
-        bal1El.style.color = '#e74c3c';
-        bal2El.style.color = '#e74c3c';
+        bal1El.innerText = 'API не підключено'; bal2El.innerText = 'API не підключено';
+        bal1El.style.color = '#e74c3c'; bal2El.style.color = '#e74c3c';
         return;
     }
 
     try {
-        bal1El.innerText = 'Завантаження...';
-        bal2El.innerText = 'Завантаження...';
-
+        bal1El.innerText = 'Завантаження...'; bal2El.innerText = 'Завантаження...';
         const result = await fetchBalances(apiKeys);
         
         const getBal = (exName) => {
             const match = result.details.find(d => d.exchange === exName);
             if (match && !match.error) return match.balance;
-            const baseEx = exName.replace(' Spot', '');
-            const fallbackMatch = result.details.find(d => d.exchange === baseEx);
+            const fallbackMatch = result.details.find(d => d.exchange === exName.replace(' Spot', ''));
             if (fallbackMatch && !fallbackMatch.error) return fallbackMatch.balance;
             return 0;
         };
 
-        balanceEx1 = getBal(rawEx1Name);
-        balanceEx2 = getBal(rawEx2Name);
-
-        bal1El.innerText = balanceEx1.toFixed(2) + ' USDT';
-        bal2El.innerText = balanceEx2.toFixed(2) + ' USDT';
+        balanceEx1 = getBal(rawEx1Name); balanceEx2 = getBal(rawEx2Name);
+        bal1El.innerText = balanceEx1.toFixed(2) + ' USDT'; bal2El.innerText = balanceEx2.toFixed(2) + ' USDT';
 
         const err1 = result.details.find(d => d.exchange === rawEx1Name || d.exchange === rawEx1Name.replace(' Spot', ''))?.error;
         if (err1) { bal1El.innerText = 'Помилка API'; bal1El.title = err1; bal1El.style.color = '#e74c3c'; }
@@ -413,15 +413,12 @@ async function updateLiveBalances() {
         if (err2) { bal2El.innerText = 'Помилка API'; bal2El.title = err2; bal2El.style.color = '#e74c3c'; }
 
     } catch (err) {
-        bal1El.innerText = 'Помилка';
-        bal2El.innerText = 'Помилка';
-        console.error("Помилка завантаження балансів:", err);
+        bal1El.innerText = 'Помилка'; bal2El.innerText = 'Помилка';
     }
 }
 
 window.setTradeDir = function(exIndex, dir) {
-    if (exIndex === 1) tradeDir1 = dir;
-    else tradeDir2 = dir;
+    if (exIndex === 1) tradeDir1 = dir; else tradeDir2 = dir;
     const btnBuy = document.getElementById(`btn-buy-${exIndex}`);
     const btnSell = document.getElementById(`btn-sell-${exIndex}`);
     if (dir === 'buy') { btnBuy.classList.add('active', 'green'); btnSell.classList.remove('active', 'red'); } 
@@ -438,12 +435,8 @@ window.setTradePercent = function(exIndex, pct) {
     const currentPrice = exIndex === 1 ? currentP1 : currentP2;
 
     if (!currentPrice || currentPrice <= 0) return;
-
-    if (type === 'USDT') {
-        input.value = (bal * pct).toFixed(2);
-    } else {
-        input.value = ((bal * pct) / currentPrice).toFixed(4); 
-    }
+    if (type === 'USDT') input.value = (bal * pct).toFixed(2);
+    else input.value = ((bal * pct) / currentPrice).toFixed(4); 
 };
 
 window.executeDualTrade = async function() {
@@ -458,29 +451,19 @@ window.executeDualTrade = async function() {
     try {
         const amt1 = parseFloat(document.getElementById('trade-amount-1').value);
         const amt2 = parseFloat(document.getElementById('trade-amount-2').value);
-        
-        if (isNaN(amt1) || isNaN(amt2) || amt1 <= 0 || amt2 <= 0) {
-            throw new Error("Введіть коректну кількість для обох бірж!");
-        }
+        if (isNaN(amt1) || isNaN(amt2) || amt1 <= 0 || amt2 <= 0) throw new Error("Введіть коректну кількість для обох бірж!");
 
         console.log("EXECUTE MARKET ORDERS MOCKUP");
         await new Promise(r => setTimeout(r, 800));
 
-        btn.innerText = 'Успішно відкрито!';
-        btn.style.background = '#27ae60';
-        
+        btn.innerText = 'Успішно відкрито!'; btn.style.background = '#27ae60';
         updateLiveBalances();
 
     } catch (e) {
-        btn.innerText = 'Помилка: ' + e.message;
-        btn.style.background = '#e74c3c';
+        btn.innerText = 'Помилка: ' + e.message; btn.style.background = '#e74c3c';
         setTimeout(() => alert(e.message), 100);
     } finally {
-        setTimeout(() => {
-            btn.innerText = origText;
-            btn.style.background = '#00d67c';
-            btn.disabled = false;
-        }, 2500);
+        setTimeout(() => { btn.innerText = origText; btn.style.background = '#00d67c'; btn.disabled = false; }, 2500);
     }
 };
 
@@ -728,6 +711,22 @@ let ws1Active = false, ws2Active = false;
 let mexcFutMultiplier1 = 1;
 let mexcFutMultiplier2 = 1;
 
+async function getMexcListenKey() {
+    if (apiKeys['MEXC'] && apiKeys['MEXC'].key) {
+        try {
+            const res = await axios.post('https://api.mexc.com/api/v3/userDataStream', null, {
+                headers: { 'X-MEXC-APIKEY': apiKeys['MEXC'].key }
+            });
+            if (res.data && res.data.listenKey) {
+                return res.data.listenKey;
+            }
+        } catch (e) {
+            console.warn("[MEXC Spot] Не вдалося отримати ListenKey для WS авторизації. Працюємо через публічний канал.");
+        }
+    }
+    return null;
+}
+
 async function fetchMexcMultiplier(exIndex, exName, symbol, retries = 3) {
     if (exName !== 'MEXC') return;
     const s = symbol.replace('_', '').toUpperCase().replace('USDT', '_USDT');
@@ -752,7 +751,7 @@ function updateStatusDot() {
     dot.className = (ws1Active && ws2Active) ? 'status-dot dot-green' : 'status-dot dot-red';
 }
 
-function connectExchange(exIndex, exName, symbol) {
+async function connectExchange(exIndex, exName, symbol) {
     const cleanSym = symbol.replace('_', '').toUpperCase();
     let wsUrl = '';
     
@@ -768,7 +767,14 @@ function connectExchange(exIndex, exName, symbol) {
     else if (exName === 'Gate.io') wsUrl = 'wss://fx-ws.gateio.ws/v4/ws/usdt';
     else if (exName === 'Gate.io Spot') wsUrl = 'wss://api.gateio.ws/ws/v4/';
     else if (exName === 'MEXC') wsUrl = 'wss://contract.mexc.com/edge';
-    else if (exName === 'MEXC Spot') wsUrl = 'wss://wbs-api.mexc.com/ws'; 
+    else if (exName === 'MEXC Spot') {
+        wsUrl = 'wss://wbs-api.mexc.com/ws'; 
+        const lKey = await getMexcListenKey();
+        if (lKey) {
+            wsUrl += `?listenKey=${lKey}`;
+            console.log("✅ [MEXC Spot] АПІ ключ застосовано, підключення до приватної WS лінії...");
+        }
+    }
     else if (exName === 'Bitget') wsUrl = 'wss://ws.bitget.com/mix/v1/stream';
     else if (exName === 'Bitget Spot') wsUrl = 'wss://ws.bitget.com/spot/v1/stream';
 
@@ -938,8 +944,8 @@ async function initLive() {
     
     window.loadSpreadHistory(0.5, document.querySelector('.btn-spread-time.active'));
     
-    ws1 = connectExchange(1, rawEx1Name, symbol);
-    ws2 = connectExchange(2, rawEx2Name, symbol);
+    ws1 = await connectExchange(1, rawEx1Name, symbol);
+    ws2 = await connectExchange(2, rawEx2Name, symbol);
 }
 
 initLive();
